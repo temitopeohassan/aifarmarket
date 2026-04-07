@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: aifarmarket-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ALLOW_UNAUTHENTICATED_TRADES
+        value: "false"
+      - key: DEFAULT_AGENT_ID
+        sync: false

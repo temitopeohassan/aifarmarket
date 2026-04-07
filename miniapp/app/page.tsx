@@ -1,10 +1,14 @@
 'use client';
 import useSWR from 'swr';
 
+const backendBase = process.env.NEXT_PUBLIC_BACKEND_API_BASE_URL || '';
+const marketsEndpoint = backendBase ? `${backendBase}/api/markets` : '/api/markets';
+const tradeEndpoint = backendBase ? `${backendBase}/api/trade` : '/api/trade';
+
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 export default function Home() {
-  const { data } = useSWR('/api/markets', fetcher);
+  const { data } = useSWR(marketsEndpoint, fetcher);
 
   return (
     <div style={{padding:20}}>
@@ -22,8 +26,9 @@ export default function Home() {
 }
 
 async function trade(market_id:string, side:string){
-  await fetch('/api/trade',{
+  await fetch(tradeEndpoint,{
     method:'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({market_id, side, amount:10})
   });
   alert('Trade executed');

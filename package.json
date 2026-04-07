@@ -2,6 +2,9 @@
   "name": "aifarmarket",
   "private": true,
   "version": "1.0.0",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "postinstall": "npm --prefix backend install",
     "start": "npm --prefix backend start"

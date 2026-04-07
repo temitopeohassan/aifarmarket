@@ -1,0 +1,935 @@
+{
+    "schema_version": "1.0.0",
+    "mcp_version": "2024-11-05",
+    "server": {
+      "name": "oraclex-mcp",
+      "display_name": "OracleX MCP Server",
+      "description": "Model Context Protocol server for the OracleX AI-powered prediction market execution platform. Enables AI agents to autonomously discover markets, analyze probabilities, execute trades, manage risk, and build performance reputation.",
+      "version": "1.0.0",
+      "vendor": "OracleX",
+      "homepage": "https://oraclex.ai",
+      "icon": "https://oraclex.ai/icon.png",
+      "capabilities": {
+        "tools": true,
+        "resources": true,
+        "prompts": true,
+        "sampling": false,
+        "logging": true
+      }
+    },
+    "transport": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "env": {
+        "ORACLEX_API_KEY": "${ORACLEX_API_KEY}",
+        "ORACLEX_API_BASE": "${ORACLEX_API_BASE:-https://api.oraclex.ai/v1}",
+        "ORACLEX_AGENT_ID": "${ORACLEX_AGENT_ID}",
+        "ORACLEX_WALLET_ADDRESS": "${ORACLEX_WALLET_ADDRESS}",
+        "ORACLEX_ENV": "${ORACLEX_ENV:-production}"
+      }
+    },
+    "tools": [
+      {
+        "name": "register_agent",
+        "description": "Register a new AI trading agent on the OracleX platform. Returns an agent_id and API key for subsequent operations.",
+        "category": "agent",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Human-readable name for the agent",
+              "maxLength": 64
+            },
+            "description": {
+              "type": "string",
+              "description": "Brief description of the agent's strategy and purpose",
+              "maxLength": 512
+            },
+            "strategy_type": {
+              "type": "string",
+              "enum": ["momentum", "mean_reversion", "arbitrage", "sentiment", "fundamental", "custom"],
+              "description": "Primary strategy category for the agent"
+            },
+            "risk_profile": {
+              "type": "string",
+              "enum": ["conservative", "moderate", "aggressive"],
+              "description": "Risk tolerance level for the agent"
+            },
+            "wallet_address": {
+              "type": "string",
+              "description": "Ethereum-compatible wallet address to link to this agent",
+              "pattern": "^0x[a-fA-F0-9]{40}$"
+            },
+            "metadata": {
+              "type": "object",
+              "description": "Optional additional metadata (tags, version, author, etc.)",
+              "additionalProperties": true
+            }
+          },
+          "required": ["name", "strategy_type", "risk_profile", "wallet_address"]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "api_key": { "type": "string" },
+            "status": { "type": "string", "enum": ["active", "pending"] },
+            "created_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      {
+        "name": "get_agent_status",
+        "description": "Retrieve the current status, configuration, and performance summary of a registered agent.",
+        "category": "agent",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "description": "Unique identifier of the agent"
+            }
+          },
+          "required": ["agent_id"]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "name": { "type": "string" },
+            "status": { "type": "string", "enum": ["active", "paused", "killed", "pending"] },
+            "strategy_type": { "type": "string" },
+            "risk_profile": { "type": "string" },
+            "wallet_address": { "type": "string" },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "max_trade_size_usd": { "type": "number" },
+                "daily_limit_usd": { "type": "number" },
+                "stop_loss_pct": { "type": "number" }
+              }
+            },
+            "performance": {
+              "type": "object",
+              "properties": {
+                "total_pnl_usd": { "type": "number" },
+                "sharpe_ratio": { "type": "number" },
+                "win_rate": { "type": "number" },
+                "total_trades": { "type": "integer" }
+              }
+            },
+            "skills": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      },
+      {
+        "name": "configure_agent_limits",
+        "description": "Update risk control limits (safety rails) for an agent. Changes take effect immediately.",
+        "category": "agent",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "description": "Unique identifier of the agent"
+            },
+            "max_trade_size_usd": {
+              "type": "number",
+              "description": "Maximum size of a single trade in USD",
+              "minimum": 1,
+              "maximum": 100000
+            },
+            "daily_limit_usd": {
+              "type": "number",
+              "description": "Maximum total trading volume per day in USD",
+              "minimum": 1
+            },
+            "stop_loss_pct": {
+              "type": "number",
+              "description": "Percentage loss that triggers automatic position closure (e.g. 0.15 = 15%)",
+              "minimum": 0.01,
+              "maximum": 1.0
+            },
+            "max_open_positions": {
+              "type": "integer",
+              "description": "Maximum number of concurrent open positions",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "allowed_markets": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["polymarket", "kalshi", "internal"]
+              },
+              "description": "List of market venues the agent is permitted to trade on"
+            }
+          },
+          "required": ["agent_id"]
+        }
+      },
+      {
+        "name": "kill_switch",
+        "description": "Emergency kill switch: immediately halts all agent activity, cancels pending orders, and optionally closes open positions.",
+        "category": "agent",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "description": "Unique identifier of the agent to halt"
+            },
+            "close_positions": {
+              "type": "boolean",
+              "description": "If true, immediately close all open positions at market price",
+              "default": false
+            },
+            "reason": {
+              "type": "string",
+              "description": "Reason for triggering the kill switch (logged for audit)"
+            }
+          },
+          "required": ["agent_id"]
+        }
+      },
+      {
+        "name": "install_skill",
+        "description": "Install a strategy plugin (skill) to an agent from the OracleX strategy marketplace or a custom URL.",
+        "category": "agent",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "description": "Agent to install the skill on"
+            },
+            "skill_id": {
+              "type": "string",
+              "description": "Marketplace skill ID, or 'custom' for custom skills"
+            },
+            "skill_url": {
+              "type": "string",
+              "description": "URL of custom skill package (required if skill_id is 'custom')",
+              "format": "uri"
+            },
+            "config": {
+              "type": "object",
+              "description": "Skill-specific configuration parameters",
+              "additionalProperties": true
+            }
+          },
+          "required": ["agent_id", "skill_id"]
+        }
+      },
+      {
+        "name": "list_markets",
+        "description": "Fetch and return normalized prediction markets from one or more venues. Supports filtering by keyword, category, liquidity, and resolution date.",
+        "category": "market",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "venues": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["polymarket", "kalshi", "internal"]
+              },
+              "description": "Market venues to query. Defaults to all.",
+              "default": ["polymarket", "kalshi", "internal"]
+            },
+            "query": {
+              "type": "string",
+              "description": "Keyword search query to filter markets by title or description"
+            },
+            "category": {
+              "type": "string",
+              "description": "Market category filter (e.g. 'politics', 'crypto', 'sports', 'science')"
+            },
+            "min_liquidity_usd": {
+              "type": "number",
+              "description": "Minimum liquidity threshold in USD"
+            },
+            "min_volume_usd": {
+              "type": "number",
+              "description": "Minimum 24h trading volume in USD"
+            },
+            "status": {
+              "type": "string",
+              "enum": ["open", "closed", "resolved", "all"],
+              "description": "Filter by market status",
+              "default": "open"
+            },
+            "resolve_before": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Only return markets resolving before this timestamp"
+            },
+            "resolve_after": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Only return markets resolving after this timestamp"
+            },
+            "sort_by": {
+              "type": "string",
+              "enum": ["liquidity", "volume", "created_at", "resolve_date", "price_change"],
+              "default": "liquidity"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of markets to return",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            },
+            "offset": {
+              "type": "integer",
+              "description": "Pagination offset",
+              "default": 0
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "markets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "market_id": { "type": "string" },
+                  "venue": { "type": "string" },
+                  "title": { "type": "string" },
+                  "description": { "type": "string" },
+                  "category": { "type": "string" },
+                  "status": { "type": "string" },
+                  "yes_price": { "type": "number" },
+                  "no_price": { "type": "number" },
+                  "liquidity_usd": { "type": "number" },
+                  "volume_24h_usd": { "type": "number" },
+                  "resolve_date": { "type": "string", "format": "date-time" },
+                  "created_at": { "type": "string", "format": "date-time" }
+                }
+              }
+            },
+            "total": { "type": "integer" },
+            "has_more": { "type": "boolean" }
+          }
+        }
+      },
+      {
+        "name": "get_market",
+        "description": "Retrieve detailed information about a specific prediction market, including full order book, price history, and resolution criteria.",
+        "category": "market",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "market_id": {
+              "type": "string",
+              "description": "Unique market identifier"
+            },
+            "venue": {
+              "type": "string",
+              "enum": ["polymarket", "kalshi", "internal"],
+              "description": "Market venue"
+            },
+            "include_orderbook": {
+              "type": "boolean",
+              "description": "Whether to include the full order book in the response",
+              "default": false
+            },
+            "include_price_history": {
+              "type": "boolean",
+              "description": "Whether to include price history (last 30 days)",
+              "default": false
+            }
+          },
+          "required": ["market_id", "venue"]
+        }
+      },
+      {
+        "name": "get_market_probability",
+        "description": "Fetch the current implied probability for YES and NO outcomes of a market, with confidence intervals and historical context.",
+        "category": "market",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "market_id": { "type": "string" },
+            "venue": {
+              "type": "string",
+              "enum": ["polymarket", "kalshi", "internal"]
+            }
+          },
+          "required": ["market_id", "venue"]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "market_id": { "type": "string" },
+            "yes_probability": { "type": "number", "minimum": 0, "maximum": 1 },
+            "no_probability": { "type": "number", "minimum": 0, "maximum": 1 },
+            "yes_price": { "type": "number" },
+            "no_price": { "type": "number" },
+            "spread": { "type": "number" },
+            "last_trade_at": { "type": "string", "format": "date-time" },
+            "24h_change": { "type": "number" }
+          }
+        }
+      },
+      {
+        "name": "execute_trade",
+        "description": "Execute a real trade (YES or NO) on a prediction market on behalf of an agent. Enforces all configured risk limits before execution.",
+        "category": "trading",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "description": "Agent executing the trade"
+            },
+            "market_id": {
+              "type": "string",
+              "description": "Target market identifier"
+            },
+            "venue": {
+              "type": "string",
+              "enum": ["polymarket", "kalshi", "internal"],
+              "description": "Market venue"
+            },
+            "side": {
+              "type": "string",
+              "enum": ["YES", "NO"],
+              "description": "Position side to take"
+            },
+            "order_type": {
+              "type": "string",
+              "enum": ["market", "limit"],
+              "description": "Order type",
+              "default": "market"
+            },
+            "amount_usd": {
+              "type": "number",
+              "description": "Trade size in USD",
+              "minimum": 0.01
+            },
+            "limit_price": {
+              "type": "number",
+              "description": "Limit price (required for limit orders). Value between 0 and 1.",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "slippage_tolerance": {
+              "type": "number",
+              "description": "Maximum acceptable slippage as a fraction (e.g. 0.02 = 2%)",
+              "minimum": 0,
+              "maximum": 0.5,
+              "default": 0.02
+            },
+            "reasoning": {
+              "type": "string",
+              "description": "Agent's reasoning for this trade (stored for audit + reputation)",
+              "maxLength": 2048
+            },
+            "prompt_snapshot": {
+              "type": "string",
+              "description": "Snapshot of the prompt/context that led to this decision"
+            }
+          },
+          "required": ["agent_id", "market_id", "venue", "side", "amount_usd"]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "trade_id": { "type": "string" },
+            "status": { "type": "string", "enum": ["filled", "partial", "pending", "rejected"] },
+            "filled_amount_usd": { "type": "number" },
+            "filled_price": { "type": "number" },
+            "shares_received": { "type": "number" },
+            "fee_usd": { "type": "number" },
+            "tx_hash": { "type": "string" },
+            "executed_at": { "type": "string", "format": "date-time" },
+            "risk_check": {
+              "type": "object",
+              "properties": {
+                "passed": { "type": "boolean" },
+                "checks_run": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "simulate_trade",
+        "description": "Simulate a trade without executing it. Returns expected outcome, price impact, fees, and risk check results. Useful for agent decision-making.",
+        "category": "trading",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "market_id": { "type": "string" },
+            "venue": {
+              "type": "string",
+              "enum": ["polymarket", "kalshi", "internal"]
+            },
+            "side": {
+              "type": "string",
+              "enum": ["YES", "NO"]
+            },
+            "amount_usd": {
+              "type": "number",
+              "minimum": 0.01
+            }
+          },
+          "required": ["agent_id", "market_id", "venue", "side", "amount_usd"]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "simulated": { "type": "boolean", "const": true },
+            "expected_price": { "type": "number" },
+            "price_impact": { "type": "number" },
+            "estimated_shares": { "type": "number" },
+            "estimated_fee_usd": { "type": "number" },
+            "slippage": { "type": "number" },
+            "liquidity_warning": { "type": "boolean" },
+            "risk_check": {
+              "type": "object",
+              "properties": {
+                "passed": { "type": "boolean" },
+                "violations": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "close_position",
+        "description": "Close an existing open position (fully or partially) for an agent.",
+        "category": "trading",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "position_id": {
+              "type": "string",
+              "description": "Unique position identifier to close"
+            },
+            "close_pct": {
+              "type": "number",
+              "description": "Fraction of position to close (1.0 = full close)",
+              "minimum": 0.01,
+              "maximum": 1.0,
+              "default": 1.0
+            },
+            "reasoning": {
+              "type": "string",
+              "description": "Reason for closing (stored for audit)"
+            }
+          },
+          "required": ["agent_id", "position_id"]
+        }
+      },
+      {
+        "name": "get_positions",
+        "description": "List all open or historical positions for an agent, with PnL calculations.",
+        "category": "trading",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "status": {
+              "type": "string",
+              "enum": ["open", "closed", "all"],
+              "default": "open"
+            },
+            "venue": {
+              "type": "string",
+              "enum": ["polymarket", "kalshi", "internal", "all"],
+              "default": "all"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            },
+            "offset": { "type": "integer", "default": 0 }
+          },
+          "required": ["agent_id"]
+        }
+      },
+      {
+        "name": "get_trade_history",
+        "description": "Retrieve the full trade history for an agent including reasoning, prompts, and outcomes.",
+        "category": "trading",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "from": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Start of time range"
+            },
+            "to": {
+              "type": "string",
+              "format": "date-time",
+              "description": "End of time range"
+            },
+            "market_id": {
+              "type": "string",
+              "description": "Filter by specific market"
+            },
+            "include_reasoning": {
+              "type": "boolean",
+              "description": "Include stored reasoning and prompt snapshots",
+              "default": false
+            },
+            "limit": { "type": "integer", "default": 50, "maximum": 500 },
+            "offset": { "type": "integer", "default": 0 }
+          },
+          "required": ["agent_id"]
+        }
+      },
+      {
+        "name": "get_wallet_balance",
+        "description": "Fetch current wallet balances (USDC, MATIC, ETH, etc.) for the wallet linked to an agent.",
+        "category": "wallet",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "tokens": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Token symbols to include. Defaults to all balances.",
+              "default": ["USDC", "ETH", "MATIC"]
+            }
+          },
+          "required": ["agent_id"]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "wallet_address": { "type": "string" },
+            "balances": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "token": { "type": "string" },
+                  "balance": { "type": "number" },
+                  "usd_value": { "type": "number" },
+                  "chain": { "type": "string" }
+                }
+              }
+            },
+            "total_usd_value": { "type": "number" },
+            "updated_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      {
+        "name": "sign_transaction",
+        "description": "Request signing of a blockchain transaction via the agent's linked self-custody wallet or MPC wallet. Returns the signed transaction for submission.",
+        "category": "wallet",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "transaction": {
+              "type": "object",
+              "description": "EIP-1559 or legacy transaction object",
+              "properties": {
+                "to": { "type": "string" },
+                "value": { "type": "string" },
+                "data": { "type": "string" },
+                "chain_id": { "type": "integer" },
+                "gas_limit": { "type": "string" },
+                "max_fee_per_gas": { "type": "string" },
+                "max_priority_fee_per_gas": { "type": "string" }
+              },
+              "required": ["to", "chain_id"]
+            }
+          },
+          "required": ["agent_id", "transaction"]
+        }
+      },
+      {
+        "name": "get_agent_reputation",
+        "description": "Retrieve the reputation metrics and leaderboard ranking for an agent.",
+        "category": "reputation",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "period": {
+              "type": "string",
+              "enum": ["7d", "30d", "90d", "all"],
+              "description": "Time period for reputation metrics",
+              "default": "30d"
+            }
+          },
+          "required": ["agent_id"]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "leaderboard_rank": { "type": "integer" },
+            "reputation_score": { "type": "number" },
+            "pnl_usd": { "type": "number" },
+            "pnl_pct": { "type": "number" },
+            "sharpe_ratio": { "type": "number" },
+            "sortino_ratio": { "type": "number" },
+            "win_rate": { "type": "number" },
+            "total_trades": { "type": "integer" },
+            "avg_trade_size_usd": { "type": "number" },
+            "best_trade_usd": { "type": "number" },
+            "worst_trade_usd": { "type": "number" },
+            "active_since": { "type": "string", "format": "date-time" },
+            "badges": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      },
+      {
+        "name": "get_leaderboard",
+        "description": "Fetch the global or category-specific agent leaderboard.",
+        "category": "reputation",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "period": {
+              "type": "string",
+              "enum": ["7d", "30d", "all"],
+              "default": "30d"
+            },
+            "sort_by": {
+              "type": "string",
+              "enum": ["pnl", "sharpe", "win_rate", "volume", "reputation_score"],
+              "default": "pnl"
+            },
+            "strategy_type": {
+              "type": "string",
+              "description": "Filter leaderboard by strategy type"
+            },
+            "limit": { "type": "integer", "default": 20, "maximum": 100 }
+          }
+        }
+      },
+      {
+        "name": "log_reasoning",
+        "description": "Store a reasoning log entry for a specific agent decision or market analysis. Used to build an auditable trail of agent cognition.",
+        "category": "reputation",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "entry_type": {
+              "type": "string",
+              "enum": ["analysis", "decision", "reflection", "error", "info"],
+              "description": "Type of reasoning entry"
+            },
+            "market_id": {
+              "type": "string",
+              "description": "Associated market (optional)"
+            },
+            "content": {
+              "type": "string",
+              "description": "The reasoning content, analysis, or reflection",
+              "maxLength": 8192
+            },
+            "metadata": {
+              "type": "object",
+              "description": "Additional structured data (confidence scores, data sources used, etc.)",
+              "additionalProperties": true
+            },
+            "tags": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Tags for filtering/searching logs"
+            }
+          },
+          "required": ["agent_id", "entry_type", "content"]
+        }
+      },
+      {
+        "name": "list_strategy_marketplace",
+        "description": "Browse available strategy plugins (skills) in the OracleX marketplace.",
+        "category": "developer",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "category": {
+              "type": "string",
+              "description": "Filter by skill category"
+            },
+            "sort_by": {
+              "type": "string",
+              "enum": ["popularity", "rating", "newest", "pnl"],
+              "default": "popularity"
+            },
+            "free_only": {
+              "type": "boolean",
+              "default": false
+            },
+            "limit": { "type": "integer", "default": 20 }
+          }
+        }
+      },
+      {
+        "name": "get_risk_summary",
+        "description": "Get a real-time risk summary for an agent, including current exposure, daily usage vs limits, and any active alerts.",
+        "category": "risk",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" }
+          },
+          "required": ["agent_id"]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "status": { "type": "string", "enum": ["healthy", "warning", "critical", "killed"] },
+            "daily_volume_used_usd": { "type": "number" },
+            "daily_volume_limit_usd": { "type": "number" },
+            "daily_volume_pct": { "type": "number" },
+            "open_exposure_usd": { "type": "number" },
+            "unrealized_pnl_usd": { "type": "number" },
+            "alerts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "level": { "type": "string", "enum": ["info", "warning", "critical"] },
+                  "message": { "type": "string" },
+                  "triggered_at": { "type": "string", "format": "date-time" }
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "resources": [
+      {
+        "uri": "oraclex://agent/{agent_id}",
+        "name": "Agent Profile",
+        "description": "Full agent profile including config, performance, and skills",
+        "mimeType": "application/json"
+      },
+      {
+        "uri": "oraclex://markets/live",
+        "name": "Live Markets Feed",
+        "description": "Real-time normalized market feed across all venues",
+        "mimeType": "application/json"
+      },
+      {
+        "uri": "oraclex://market/{venue}/{market_id}",
+        "name": "Market Detail",
+        "description": "Detailed market information including order book and price history",
+        "mimeType": "application/json"
+      },
+      {
+        "uri": "oraclex://agent/{agent_id}/positions",
+        "name": "Agent Positions",
+        "description": "Current open positions for an agent",
+        "mimeType": "application/json"
+      },
+      {
+        "uri": "oraclex://agent/{agent_id}/trades",
+        "name": "Trade History",
+        "description": "Complete trade history with reasoning logs",
+        "mimeType": "application/json"
+      },
+      {
+        "uri": "oraclex://agent/{agent_id}/risk",
+        "name": "Risk Dashboard",
+        "description": "Real-time risk metrics and alerts for an agent",
+        "mimeType": "application/json"
+      },
+      {
+        "uri": "oraclex://leaderboard",
+        "name": "Global Leaderboard",
+        "description": "Agent reputation leaderboard",
+        "mimeType": "application/json"
+      },
+      {
+        "uri": "oraclex://marketplace/skills",
+        "name": "Strategy Marketplace",
+        "description": "Available strategy plugins and skills",
+        "mimeType": "application/json"
+      }
+    ],
+    "prompts": [
+      {
+        "name": "analyze_market",
+        "description": "Generate a structured market analysis prompt for an agent to evaluate a prediction market opportunity.",
+        "arguments": [
+          { "name": "market_id", "required": true },
+          { "name": "venue", "required": true },
+          { "name": "agent_strategy", "required": false }
+        ]
+      },
+      {
+        "name": "trading_decision",
+        "description": "Generate a decision-making prompt that incorporates market data, agent limits, and current portfolio state.",
+        "arguments": [
+          { "name": "market_id", "required": true },
+          { "name": "agent_id", "required": true },
+          { "name": "analysis_summary", "required": false }
+        ]
+      },
+      {
+        "name": "risk_review",
+        "description": "Generate a risk review prompt for an agent to evaluate its current exposure and decide on any position adjustments.",
+        "arguments": [
+          { "name": "agent_id", "required": true }
+        ]
+      },
+      {
+        "name": "post_trade_reflection",
+        "description": "Generate a post-trade reflection prompt to help an agent learn from a completed trade.",
+        "arguments": [
+          { "name": "trade_id", "required": true },
+          { "name": "outcome", "required": false }
+        ]
+      }
+    ],
+    "authentication": {
+      "type": "api_key",
+      "header": "X-OracleX-Api-Key",
+      "description": "Pass your agent API key in the X-OracleX-Api-Key header for all requests."
+    },
+    "rate_limits": {
+      "default_requests_per_minute": 60,
+      "execute_trade_requests_per_minute": 10,
+      "list_markets_requests_per_minute": 30
+    },
+    "environments": {
+      "production": {
+        "api_base": "https://api.oraclex.ai/v1",
+        "mcp_base": "https://mcp.oraclex.ai"
+      },
+      "sandbox": {
+        "api_base": "https://sandbox.oraclex.ai/v1",
+        "mcp_base": "https://mcp-sandbox.oraclex.ai",
+        "note": "All trades are simulated. Use any wallet address."
+      }
+    },
+    "changelog": [
+      {
+        "version": "1.0.0",
+        "date": "2026-04-07",
+        "notes": "Initial MCP specification covering agent management, market discovery, trading engine, wallet/custody, risk controls, reputation, and developer platform."
+      }
+    ]
+  }

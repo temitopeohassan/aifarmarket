@@ -1,8 +1,24 @@
-export async function POST(req: Request){
+export async function POST(req: Request) {
+  const backendBase = process.env.BACKEND_API_BASE_URL;
+  if (!backendBase) {
+    return Response.json(
+      { error: "BACKEND_API_BASE_URL is not configured" },
+      { status: 500 },
+    );
+  }
+
   const body = await req.json();
+  const apiKey = req.headers.get("x-api-key");
 
-  // TODO: integrate real smart contract / Polymarket execution
-  console.log('Executing trade', body);
+  const response = await fetch(`${backendBase}/api/trade`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(apiKey ? { "x-api-key": apiKey } : {}),
+    },
+    body: JSON.stringify(body),
+  });
 
-  return Response.json({success:true});
+  const data = await response.json();
+  return Response.json(data, { status: response.status });
 }

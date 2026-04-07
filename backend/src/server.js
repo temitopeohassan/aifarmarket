@@ -1,0 +1,165 @@
+import "dotenv/config";
+import cors from "cors";
+import express from "express";
+import morgan from "morgan";
+import { createClient } from "@supabase/supabase-js";
+
+const app = express();
+const port = Number(process.env.PORT || 8080);
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const allowUnauthenticatedTrades = process.env.ALLOW_UNAUTHENTICATED_TRADES === "true";
+const defaultAgentId = process.env.DEFAULT_AGENT_ID || null;
+
+const allowedOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((v) => v.trim())
+  .filter(Boolean);
+
+const corsOptions = allowedOrigins.length
+  ? { origin: allowedOrigins }
+  : { origin: true };
+
+app.use(cors(corsOptions));
+app.use(express.json({ limit: "1mb" }));
+app.use(morgan("combined"));
+
+let supabase = null;
+if (supabaseUrl && supabaseServiceRoleKey) {
+  supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+}
+
+app.get("/health", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "aifarmarket-backend",
+    supabaseConfigured: Boolean(supabase),
+  });
+});
+
+app.get("/api/markets", async (_req, res) => {
+  try {
+    const r = await fetch("https://gamma-api.polymarket.com/markets");
+    if (!r.ok) {
+      return res.status(502).json({ error: "Failed to fetch markets" });
+    }
+
+    const data = await r.json();
+    const markets = (Array.isArray(data) ? data : []).slice(0, 30).map((m) => ({
+      id: String(m.id),
+      title: m.question ?? m.title ?? "",
+      yes: Math.round(Number(m?.outcomePrices?.[0] ?? 0) * 100),
+      no: Math.round(Number(m?.outcomePrices?.[1] ?? 0) * 100),
+      raw: m,
+    }));
+
+    return res.json({ markets });
+  } catch (_err) {
+    return res.status(500).json({ error: "Unexpected market fetch error" });
+  }
+});
+
+app.post("/api/trade", async (req, res) => {
+  try {
+    const { market_id, side, amount, reasoning } = req.body || {};
+    if (!market_id || !side || typeof amount !== "number") {
+      return res.status(400).json({ error: "market_id, side, and amount are required" });
+    }
+    if (!["YES", "NO"].includes(String(side).toUpperCase())) {
+      return res.status(400).json({ error: "side must be YES or NO" });
+    }
+    if (amount <= 0) {
+      return res.status(400).json({ error: "amount must be > 0" });
+    }
+    if (amount > 1000) {
+      return res.status(400).json({ error: "Trade too large" });
+    }
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase is not configured" });
+    }
+
+    let agentId = defaultAgentId;
+    const apiKey = req.header("x-api-key");
+    if (apiKey) {
+      const { data: agent } = await supabase
+        .from("agents")
+        .select("id")
+        .eq("api_key", apiKey)
+        .single();
+      if (!agent) return res.status(401).json({ error: "Unauthorized" });
+      agentId = agent.id;
+    } else if (!allowUnauthenticatedTrades) {
+      return res.status(401).json({ error: "Missing x-api-key" });
+    }
+
+    if (!agentId) {
+      return res.status(400).json({ error: "No agent available for trade" });
+    }
+
+    const { data: market } = await supabase
+      .from("markets")
+      .select("id, probability")
+      .eq("id", market_id)
+      .single();
+
+    const price = market?.probability ?? 0.5;
+    const { data: trade, error } = await supabase
+      .from("trades")
+      .insert([
+        {
+          agent_id: agentId,
+          market_id,
+          side: String(side).toUpperCase(),
+          amount,
+          price,
+          status: "filled",
+          reasoning: reasoning ?? null,
+        },
+      ])
+      .select("*")
+      .single();
+
+    if (error) {
+      return res.status(500).json({ error: "Trade insert failed", details: error.message });
+    }
+
+    return res.json({ success: true, trade });
+  } catch (_err) {
+    return res.status(500).json({ error: "Unexpected trade execution error" });
+  }
+});
+
+app.post("/api/mcp", async (req, res) => {
+  const { tool, input } = req.body || {};
+  if (!tool) return res.status(400).json({ error: "tool is required" });
+
+  if (tool === "get_markets") {
+    const response = await fetch(
+      `${req.protocol}://${req.get("host")}/api/markets`,
+      { method: "GET" },
+    );
+    const data = await response.json();
+    return res.json(data);
+  }
+
+  if (tool === "execute_trade") {
+    const response = await fetch(
+      `${req.protocol}://${req.get("host")}/api/trade`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": req.header("x-api-key") || "" },
+        body: JSON.stringify(input || {}),
+      },
+    );
+    const data = await response.json();
+    return res.status(response.status).json(data);
+  }
+
+  return res.status(400).json({ error: "Unknown tool" });
+});
+
+app.listen(port, () => {
+  // Keep this simple for platform logs.
+  console.log(`backend listening on :${port}`);
+});

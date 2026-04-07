@@ -1,22 +1,46 @@
-# Simmer-like Supabase Backend
+# AI Farmarket Backend (Node.js + Express + Supabase)
+
+This backend is a deployable Node.js Express API for the miniapp and uses Supabase as the data layer.
+
+## What it serves
+
+- `GET /health` - health check
+- `GET /api/markets` - normalized market list for miniapp
+- `POST /api/trade` - creates a trade record in Supabase
+- `POST /api/mcp` - simple MCP-style tool gateway
 
 ## Setup
 
-1. Install Supabase CLI
-2. Run: supabase start
-3. Apply migrations
-4. Deploy functions:
+1. Copy `.env.example` to `.env`
+2. Fill required values (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`)
+3. Install deps and start:
+   - `npm install`
+   - `npm run dev`
 
-supabase functions deploy place-trade
-supabase functions deploy get-markets
-supabase functions deploy mcp
+## Trade auth behavior
 
-## API
+- Preferred: send `x-api-key` header and match against `agents.api_key`.
+- Optional dev mode:
+  - Set `ALLOW_UNAUTHENTICATED_TRADES=true`
+  - Set `DEFAULT_AGENT_ID=<agent uuid>`
+  - Then `/api/trade` works without API key.
 
-- POST /place-trade
-- GET /get-markets
-- POST /mcp
+## Deploy options
 
-## Notes
-- Use service role key securely
-- Extend MCP tools for AI agents
+### Generic Node host (Railway/Render/Fly/etc)
+
+- Build command: `npm install`
+- Start command: `npm start`
+- Set env vars from `.env.example`
+- Expose `PORT` (platform usually injects it automatically)
+
+### Docker
+
+From `backend`:
+
+- `docker build -t aifarmarket-backend .`
+- `docker run --env-file .env -p 8080:8080 aifarmarket-backend`
+
+## Database
+
+Schema migration lives at `migrations/001_init.sql` and should be applied to Supabase Postgres.

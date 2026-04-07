@@ -1,0 +1,12 @@
+{
+  "name": "aifarmarket",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "postinstall": "npm --prefix backend ci --omit=dev",
+    "start": "npm --prefix backend start"
+  }
+}

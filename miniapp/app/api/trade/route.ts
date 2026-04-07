@@ -1,3 +1,6 @@
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function POST(req: Request) {
   const backendBase = process.env.BACKEND_API_BASE_URL;
   if (!backendBase) {

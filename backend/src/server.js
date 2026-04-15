@@ -38,21 +38,64 @@ app.get("/health", (_req, res) => {
   });
 });
 
+app.get("/api/agents", async (_req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+    const { data, error } = await supabase.from("agents").select("*");
+    if (error) throw error;
+    return res.json({ agents: data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/portfolio", async (req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+    
+    // In a real app, you'd filter by user/owner.
+    const { data: positions, error: pError } = await supabase.from("positions").select("*");
+    const { data: trades, error: tError } = await supabase.from("trades").select("*").order("created_at", { ascending: false }).limit(20);
+    const { data: performance, error: perfError } = await supabase.from("performance").select("*");
+
+    if (pError || tError || perfError) throw pError || tError || perfError;
+
+    return res.json({
+      wallet: { balance: 10000, available: 8500 }, // Mocked wallet for now
+      positions,
+      trades,
+      performance
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/markets", async (_req, res) => {
   try {
-    const r = await fetch("https://gamma-api.polymarket.com/markets");
+    // Fetch all active markets with pricing data
+    const r = await fetch("https://gamma-api.polymarket.com/markets?limit=100&active=true");
     if (!r.ok) {
       return res.status(502).json({ error: "Failed to fetch markets" });
     }
 
     const data = await r.json();
-    const markets = (Array.isArray(data) ? data : []).slice(0, 30).map((m) => ({
-      id: String(m.id),
-      title: m.question ?? m.title ?? "",
-      yes: Math.round(Number(m?.outcomePrices?.[0] ?? 0) * 100),
-      no: Math.round(Number(m?.outcomePrices?.[1] ?? 0) * 100),
-      raw: m,
-    }));
+    
+    // Sort by last_traded_at (or fallback to created_at) descending
+    const markets = (Array.isArray(data) ? data : [])
+      .sort((a, b) => {
+        const timeA = new Date(a.last_traded_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.last_traded_at || b.created_at || 0).getTime();
+        return timeB - timeA;
+      })
+      .map((m) => ({
+        id: String(m.id),
+        title: m.question ?? m.title ?? "",
+        yes: Math.round(Number(m?.outcomePrices?.[0] ?? 0) * 100),
+        no: Math.round(Number(m?.outcomePrices?.[1] ?? 0) * 100),
+        lastTraded: m.last_traded_at,
+        raw: m,
+      }));
 
     return res.json({ markets });
   } catch (_err) {

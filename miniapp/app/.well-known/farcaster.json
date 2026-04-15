@@ -1,0 +1,19 @@
+{
+  "accountAssociation": {
+    "header": "eyJmaWQiOjcwODcwNywidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweDQwMTJGRmQzQmE5ZTJiRjY3NDIzNTFEQzJDNDE1NWFDRjBEZjVhZWUifQ",
+    "payload": "eyJkb21haW4iOiJhaWZhcm1hcmtldC52ZXJjZWwuYXBwIn0",
+    "signature": "MHhiNzNhYWIzNDk0Zjg4ZTVmMDhhMjkwODk4MTMyNmI3MGZkNzhiMDUyYzZlODZmYmNlMzgwNjg4OTcyZmZhMmY1MmM1MWNhNDJmNmMyMTI2NTI4ZTdiOGM0YjU3YTBjNzk0Y2RmZTZiYTQ3ZTI2MTUxM2VjZjAyYWExMGNmZTI1NDFj"
+  },
+  "frame": {
+    "version": "1",
+    "name": "AI FarMarket",
+    "homeUrl": "https://aifarmarket.vercel.app",
+    "iconUrl": "https://aifarmarket.vercel.app/icon.png",
+    "splashImageUrl": "https://aifarmarket.vercel.app/splash.png",
+    "splashBackgroundColor": "#000000",
+    "webhookUrl": "https://aifarmarket.vercel.app/api/webhook",
+    "subtitle": "AI Agents Trading on Prediction Markets",
+    "description": "A platform for AI agents to trade on Polymarket with built-in performance tracking and strategy management.",
+    "ogImageUrl": "https://aifarmarket.vercel.app/og-image.png"
+  }
+}

@@ -1,35 +1,55 @@
 'use client';
-import useSWR from 'swr';
 
-const backendBase = process.env.NEXT_PUBLIC_BACKEND_API_BASE_URL || '';
-const marketsEndpoint = backendBase ? `${backendBase}/api/markets` : '/api/markets';
-const tradeEndpoint = backendBase ? `${backendBase}/api/trade` : '/api/trade';
+import { AppProvider, useApp } from '@/lib/context';
+import NavBar from '@/components/navbar';
+import Dashboard from '@/components/pages/dashboard';
+import Agents from '@/components/pages/agents';
+import Markets from '@/components/pages/markets';
+import Trading from '@/components/pages/trading';
+import Portfolio from '@/components/pages/portfolio';
 
-const fetcher = (url: string) => fetch(url).then(res => res.json());
+function AppContent() {
+  const { activeTab, isLoading } = useApp();
 
-export default function Home() {
-  const { data } = useSWR(marketsEndpoint, fetcher);
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'dashboard':
+        return <Dashboard />;
+      case 'agents':
+        return <Agents />;
+      case 'markets':
+        return <Markets />;
+      case 'trading':
+        return <Trading />;
+      case 'portfolio':
+        return <Portfolio />;
+      default:
+        return <Dashboard />;
+    }
+  };
 
   return (
-    <div style={{padding:20}}>
-      <h1>Prediction Markets</h1>
-      {data?.markets?.map((m:any)=>(
-        <div key={m.id} style={{border:'1px solid #ccc', padding:10, marginTop:10}}>
-          <h3>{m.title}</h3>
-          <p>YES: {m.yes}% | NO: {m.no}%</p>
-          <button onClick={()=>trade(m.id,'YES')}>Buy YES</button>
-          <button onClick={()=>trade(m.id,'NO')}>Buy NO</button>
-        </div>
-      ))}
+    <div className="min-h-screen bg-background text-foreground">
+      <NavBar />
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        {renderContent()}
+      </main>
     </div>
   );
 }
 
-async function trade(market_id:string, side:string){
-  await fetch(tradeEndpoint,{
-    method:'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({market_id, side, amount:10})
-  });
-  alert('Trade executed');
+export default function Home() {
+  return (
+    <AppProvider>
+      <AppContent />
+    </AppProvider>
+  );
 }

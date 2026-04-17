@@ -21,7 +21,7 @@ export default function NavBar() {
         <div className="flex items-center justify-between mb-6">
           {/* Logo/Brand */}
           <div className="flex items-center gap-3">
-          <img class="h-auto w-[60px] rounded-lg" src="logo.png" alt="image description" />
+          <img className="h-auto w-[60px] rounded-lg" src="logo.png" alt="image description" />
             <h1 className="text-2xl font-bold text-foreground">AI Farmarket</h1>
           </div>
 

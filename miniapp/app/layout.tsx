@@ -1,4 +1,6 @@
 import type { Metadata } from 'next'
+import { FarcasterSDKProvider } from "@/components/farcaster-sdk-provider"
+import { FarcasterMetaTags } from "@/components/farcaster-meta-tags"
 import './globals.css'
 
 
@@ -12,7 +14,12 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <FarcasterMetaTags />
+        <FarcasterSDKProvider>
+          {children}
+        </FarcasterSDKProvider>
+      </body>
     </html>
   );
 }

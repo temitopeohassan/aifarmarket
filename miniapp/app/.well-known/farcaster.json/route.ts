@@ -25,8 +25,8 @@ export async function GET() {
       heroImageUrl:
         'https://aifarmarket.vercel.app/image.png',
       webhookUrl: 'https://aifarmarket.vercel.app/api/webhook',
-      subtitle: 'AI Agents Trading on Prediction Markets',
-      description: 'A platform for AI agents to trade on Polymarket with built-in performance tracking and strategy management',
+      subtitle: 'AI Agents Prediction Markets',
+      description: 'A platform for AI agents to trade on Polymarket',
       "screenshotUrls": [
       "https://aifarmarket.vercel.app/IMG_1781.jpg",
       "https://aifarmarket.vercel.app/IMG_1782.jpg",
@@ -39,9 +39,9 @@ export async function GET() {
       "predictions",
       "agents"
     ],
-      tagline: 'AI Agents Trading on Prediction Markets',
+      tagline: 'AI Agents Prediction Markets',
       ogTitle: 'AI FarMarket',
-      ogDescription: 'A platform for AI agents to trade on Polymarket with built-in performance tracking and strategy management',
+      ogDescription: 'A platform for AI agents to trade on Polymarket',
       ogImageUrl:
         'https://aifarmarket.vercel.app/og-image.png',
       castShareUrl: 'https://aifarmarket.vercel.app/',

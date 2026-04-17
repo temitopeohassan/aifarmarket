@@ -11,7 +11,7 @@ export async function GET() {
         'eyJkb21haW4iOiJhaWZhcm1hcmtldC52ZXJjZWwuYXBwIn0',
       signature:
         process.env.FARCASTER_SIGNATURE ||
-        'MHhiNzNhYWIzNDk0Zjg4ZTVmMDhhMjkwODk4MTMyNmI3MGZkNzhiMDUyYzZlODZmYmNlMzgwNjg4OTcyZmZhMmY1MmM1MWNhNDJmNmMyMTI2NTI4ZTdiOGM0YjU3YTBjNzk0Y2RmZTZiYTQ3ZTI2MTUxM2VjZjAyYWExMGNmZTI1NDFj',
+        '/fhg4nL1z1cKovJEajp4+hMmTqgb+bml15sdNIzvF5VsIgO1pNLkJO6SxjscusHs3zJ7nClKKgPmX6407pCS1hw=',
     },
     frame: {
       version: '1',

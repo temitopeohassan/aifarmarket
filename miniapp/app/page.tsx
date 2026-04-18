@@ -2,6 +2,7 @@
 
 import { AppProvider, useApp } from '@/lib/context';
 import NavBar from '@/components/navbar';
+import Footer from '@/components/footer';
 import Dashboard from '@/components/pages/dashboard';
 import Agents from '@/components/pages/agents';
 import Markets from '@/components/pages/markets';
@@ -21,27 +22,25 @@ function AppContent() {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'dashboard':
-        return <Dashboard />;
-      case 'agents':
-        return <Agents />;
-      case 'markets':
-        return <Markets />;
-      case 'trading':
-        return <Trading />;
-      case 'portfolio':
-        return <Portfolio />;
-      default:
-        return <Dashboard />;
+      case 'dashboard': return <Dashboard />;
+      case 'agents': return <Agents />;
+      case 'markets': return <Markets />;
+      case 'trading': return <Trading />;
+      case 'portfolio': return <Portfolio />;
+      default: return <Dashboard />;
     }
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
       <NavBar />
-      <main className="max-w-7xl mx-auto px-4 py-8">
+
+      {/* Added pb-20 to ensure content isn't covered by the fixed footer */}
+      <main className="flex-1 max-w-7xl mx-auto px-4 py-6 pb-20 w-full">
         {renderContent()}
       </main>
+
+      <Footer />
     </div>
   );
 }

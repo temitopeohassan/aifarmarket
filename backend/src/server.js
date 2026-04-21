@@ -2,7 +2,7 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import morgan from "morgan";
-import { Wallet } from "ethers";
+import { Wallet, verifyMessage } from "ethers";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 import serverless from "serverless-http";
@@ -36,18 +36,25 @@ if (supabaseUrl && supabaseServiceRoleKey) {
 
 import admin from "firebase-admin";
 
-const serviceAccount = JSON.parse(
-    process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-);
+let firestore = null;
 
-// Fix private key formatting
-serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
+if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    if (!admin.apps.length) {
+        try {
+            const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 
-admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-});
+            serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
 
-const firestore = admin.firestore();
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount),
+            });
+            console.log("Firebase Admin Initialized");
+        } catch (error) {
+            console.error("Firebase Init Error:", error.message);
+        }
+    }
+    firestore = admin.firestore();
+}
 
 
 

@@ -54,15 +54,18 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
 // --- Middleware ---
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
-// app.use(morgan("combined")); // Disabled morgan to rule out stream issues in serverless
+// app.use(morgan("combined")); // Disabled to avoid stream issues in some serverless environments
 
 // --- Helper Functions ---
 function generateApiKey() {
     return "ag_" + crypto.randomBytes(16).toString("hex");
 }
 
-// --- Routes ---
-app.get(["/api/health", "/health"], (req, res) => {
+// --- API Router ---
+const api = express.Router();
+
+// Health check
+api.get(["/health", "/"], (req, res) => {
     res.json({
         ok: true,
         service: "aifarmarket-backend",
@@ -72,7 +75,27 @@ app.get(["/api/health", "/health"], (req, res) => {
     });
 });
 
-app.get("/api/agents", async (_req, res) => {
+// Check if user exists
+api.get("/user-exists", async (req, res) => {
+    try {
+        const { address } = req.query;
+        if (!address) return res.status(400).json({ error: "address required" });
+        if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+
+        const { data: user, error } = await supabase
+            .from("users")
+            .select("id")
+            .eq("wallet_address", String(address).toLowerCase())
+            .maybeSingle();
+
+        if (error) throw error;
+        return res.json({ exists: !!user });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+api.get("/agents", async (_req, res) => {
     try {
         if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
         const { data, error } = await supabase.from("agents").select("*");
@@ -83,7 +106,7 @@ app.get("/api/agents", async (_req, res) => {
     }
 });
 
-app.get("/api/portfolio", async (req, res) => {
+api.get("/portfolio", async (req, res) => {
     try {
         if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
 
@@ -105,7 +128,7 @@ app.get("/api/portfolio", async (req, res) => {
     }
 });
 
-app.get("/api/markets", async (_req, res) => {
+api.get("/markets", async (_req, res) => {
     try {
         // Fetch all active markets with pricing data
         const r = await fetch("https://gamma-api.polymarket.com/markets?limit=100&active=true");
@@ -137,7 +160,7 @@ app.get("/api/markets", async (_req, res) => {
     }
 });
 
-app.post("/api/trade", async (req, res) => {
+api.post("/trade", async (req, res) => {
     try {
         const { market_id, side, amount, reasoning } = req.body || {};
         if (!market_id || !side || typeof amount !== "number") {
@@ -207,7 +230,7 @@ app.post("/api/trade", async (req, res) => {
     }
 });
 
-app.post("/api/mcp", async (req, res) => {
+api.post("/mcp", async (req, res) => {
     const { tool, input } = req.body || {};
     if (!tool) return res.status(400).json({ error: "tool is required" });
 
@@ -240,8 +263,7 @@ app.post("/api/mcp", async (req, res) => {
     }
 
     if (tool === "execute_trade") {
-        // Forward the trade request internally or use a shared handler
-        // For now, continuing to use fetch but we should ideally refactor to a function shared by /api/trade
+        // Forward the trade request internally
         const response = await fetch(
             `${req.protocol}://${req.get("host")}/api/trade`,
             {
@@ -257,42 +279,46 @@ app.post("/api/mcp", async (req, res) => {
     return res.status(400).json({ error: "Unknown tool" });
 });
 
-app.post("/api/account/create", async (req, res) => {
+// Create/Register User (Unified)
+api.post(["/create-user", "/account/create"], async (req, res) => {
     try {
         if (!supabase) {
             return res.status(500).json({ error: "Supabase not configured" });
         }
 
-        const { wallet_address, signature, message } = req.body || {};
+        const { wallet_address, address, username, signature, message } = req.body || {};
+        const finalAddress = wallet_address || address;
 
-        if (!wallet_address || !signature || !message) {
-            return res.status(400).json({ error: "wallet_address, signature, message required" });
+        if (!finalAddress) {
+            return res.status(400).json({ error: "address required" });
         }
 
-        // 🔐 1. Verify signature
-        let recovered;
-        try {
-            recovered = verifyMessage(message, signature);
-        } catch {
-            return res.status(400).json({ error: "Invalid signature" });
+        // Optional signature verification
+        if (signature && message) {
+            let recovered;
+            try {
+                recovered = verifyMessage(message, signature);
+            } catch {
+                return res.status(400).json({ error: "Invalid signature" });
+            }
+
+            if (recovered.toLowerCase() !== finalAddress.toLowerCase()) {
+                return res.status(401).json({ error: "Signature does not match wallet" });
+            }
         }
 
-        if (recovered.toLowerCase() !== wallet_address.toLowerCase()) {
-            return res.status(401).json({ error: "Signature does not match wallet" });
-        }
-
-        // 2. Check if user exists
+        // Check if user exists
         let { data: user } = await supabase
             .from("users")
             .select("*")
-            .eq("wallet_address", wallet_address)
+            .eq("wallet_address", finalAddress.toLowerCase())
             .maybeSingle();
 
-        // 3. Create user if not exists
+        // Create user if not exists
         if (!user) {
             const { data: newUser, error } = await supabase
                 .from("users")
-                .insert([{ wallet_address }])
+                .insert([{ wallet_address: finalAddress.toLowerCase(), username: username || null }])
                 .select("*")
                 .single();
 
@@ -303,7 +329,7 @@ app.post("/api/account/create", async (req, res) => {
             user = newUser;
         }
 
-        // 4. Check if trading wallet exists
+        // Check/Create trading wallet
         const { data: existingWallet } = await supabase
             .from("trading_wallets")
             .select("*")
@@ -322,16 +348,14 @@ app.post("/api/account/create", async (req, res) => {
             });
         }
 
-        // 5. Create custodial trading wallet
         const wallet = Wallet.createRandom();
-
         const { data: tradingWallet, error: walletError } = await supabase
             .from("trading_wallets")
             .insert([
                 {
                     user_id: user.id,
                     address: wallet.address,
-                    private_key: wallet.privateKey, // ⚠️ encrypt later
+                    private_key: wallet.privateKey,
                     balance: 10000,
                 },
             ])
@@ -356,7 +380,7 @@ app.post("/api/account/create", async (req, res) => {
     }
 });
 
-app.post("/api/agent/register", async (req, res) => {
+api.post("/agent/register", async (req, res) => {
     try {
         const { wallet_address, signature, message, name, description } = req.body || {};
 
@@ -364,26 +388,24 @@ app.post("/api/agent/register", async (req, res) => {
             return res.status(400).json({ error: "Missing required fields" });
         }
 
-        // 🔐 Verify wallet
+        // Verify wallet
         const recovered = verifyMessage(message, signature);
         if (recovered.toLowerCase() !== wallet_address.toLowerCase()) {
             return res.status(401).json({ error: "Invalid signature" });
         }
 
-        // 1. Get user
+        // Get user
         const { data: user } = await supabase
             .from("users")
             .select("*")
-            .eq("wallet_address", wallet_address)
+            .eq("wallet_address", wallet_address.toLowerCase())
             .single();
 
         if (!user) {
             return res.status(404).json({ error: "User not found" });
         }
 
-        // 2. Create agent
         const apiKey = generateApiKey();
-
         const { data: agent, error } = await supabase
             .from("agents")
             .insert([
@@ -401,14 +423,12 @@ app.post("/api/agent/register", async (req, res) => {
             return res.status(500).json({ error: error.message });
         }
 
-        // 3. Create agent wallet
         const wallet = Wallet.createRandom();
-
         if (firestore) {
             await firestore.collection("agent_wallets").doc(agent.id).set({
                 agentId: agent.id,
                 address: wallet.address,
-                privateKey: wallet.privateKey, // ⚠️ encrypt later
+                privateKey: wallet.privateKey,
                 balance: 10000,
                 createdAt: new Date().toISOString(),
             });
@@ -431,6 +451,9 @@ app.post("/api/agent/register", async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
+
+// Apply API router
+app.use("/api", api);
 
 // Start server if run directly
 if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {

@@ -212,15 +212,36 @@ app.post("/api/mcp", async (req, res) => {
     if (!tool) return res.status(400).json({ error: "tool is required" });
 
     if (tool === "get_markets") {
-        const response = await fetch(
-            `${req.protocol}://${req.get("host")}/api/markets`,
-            { method: "GET" },
-        );
-        const data = await response.json();
-        return res.json(data);
+        try {
+            // Internal fetch to avoid network deadlock in serverless
+            const r = await fetch("https://gamma-api.polymarket.com/markets?limit=100&active=true");
+            const data = await r.json();
+            
+            // Format similarly to /api/markets
+            const markets = (Array.isArray(data) ? data : [])
+                .sort((a, b) => {
+                    const timeA = new Date(a.last_traded_at || a.created_at || 0).getTime();
+                    const timeB = new Date(b.last_traded_at || b.created_at || 0).getTime();
+                    return timeB - timeA;
+                })
+                .map((m) => ({
+                    id: String(m.id),
+                    title: m.question ?? m.title ?? "",
+                    yes: Math.round(Number(m?.outcomePrices?.[0] ?? 0) * 100),
+                    no: Math.round(Number(m?.outcomePrices?.[1] ?? 0) * 100),
+                    lastTraded: m.last_traded_at,
+                    raw: m,
+                }));
+
+            return res.json({ markets });
+        } catch (err) {
+            return res.status(500).json({ error: "Failed to fetch markets via MCP" });
+        }
     }
 
     if (tool === "execute_trade") {
+        // Forward the trade request internally or use a shared handler
+        // For now, continuing to use fetch but we should ideally refactor to a function shared by /api/trade
         const response = await fetch(
             `${req.protocol}://${req.get("host")}/api/trade`,
             {

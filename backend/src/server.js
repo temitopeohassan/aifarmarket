@@ -66,11 +66,14 @@ const api = express.Router();
 
 // Health check
 api.get(["/health", "/"], (req, res) => {
-    res.json({
-        ok: true,
+    const supabaseConfigured = !!supabase;
+    const firestoreConfigured = !!firestore;
+    
+    res.status(supabaseConfigured ? 200 : 503).json({
+        ok: supabaseConfigured,
         service: "aifarmarket-backend",
-        supabaseConnected: !!supabase,
-        firestoreConnected: !!firestore,
+        supabaseConnected: supabaseConfigured,
+        firestoreConnected: firestoreConfigured,
         envCheck: !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON
     });
 });
@@ -318,12 +321,13 @@ api.post(["/create-user", "/account/create"], async (req, res) => {
         if (!user) {
             const { data: newUser, error } = await supabase
                 .from("users")
-                .insert([{ wallet_address: finalAddress.toLowerCase(), username: username || null }])
+                .insert([{ wallet_address: finalAddress.toLowerCase() }]) // Removed username to prevent potential schema mismatch 500s
                 .select("*")
                 .single();
 
             if (error) {
-                return res.status(500).json({ error: error.message });
+                console.error("Create User Insert Error:", error);
+                return res.status(500).json({ error: "Database insert failed", details: error.message });
             }
 
             user = newUser;

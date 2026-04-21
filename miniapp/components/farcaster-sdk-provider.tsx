@@ -3,29 +3,45 @@
 import { useEffect, useState, createContext, useContext } from "react"
 import { sdk } from "@farcaster/miniapp-sdk"
 
-// Create a small context to share the address
-const WalletContext = createContext<{ address: string | null }>({ address: null });
+// Dynamically get the type from the SDK
+type ContextType = Awaited<typeof sdk.context>;
+
+interface FarcasterContextType {
+  address: string | null;
+  fcUsername: string | null;
+}
+
+const WalletContext = createContext<FarcasterContextType>({
+  address: null,
+  fcUsername: null
+});
 
 export function FarcasterSDKProvider({ children }: { children: React.ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
+  const [fcUsername, setFcUsername] = useState<string | null>(null);
 
   useEffect(() => {
     const initSDK = async () => {
       try {
-        // 1. Signal that the app is ready
+        // cast to the dynamic type
+        const context = (await sdk.context) as ContextType;
+
+        if (context?.user?.username) {
+          setFcUsername(context.user.username);
+        }
+
         await sdk.actions.ready();
 
-        // 2. Get the Ethereum provider and request accounts automatically
         const provider = await sdk.wallet.getEthereumProvider();
-        const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
+        const accounts = (await provider.request({
+          method: "eth_requestAccounts"
+        })) as string[];
 
         if (accounts && accounts.length > 0) {
           setAddress(accounts[0]);
         }
-
-        console.log("Farcaster SDK and Wallet initialized");
       } catch (error) {
-        console.error("Initialization error:", error);
+        console.error("Farcaster SDK Initialization error:", error);
       }
     };
 
@@ -33,11 +49,10 @@ export function FarcasterSDKProvider({ children }: { children: React.ReactNode }
   }, []);
 
   return (
-    <WalletContext.Provider value={{ address }}>
+    <WalletContext.Provider value={{ address, fcUsername }}>
       {children}
     </WalletContext.Provider>
   );
 }
 
-// Custom hook to use the wallet address elsewhere
 export const useFarcasterWallet = () => useContext(WalletContext);

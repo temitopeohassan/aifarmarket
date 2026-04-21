@@ -5,12 +5,12 @@ import morgan from "morgan";
 import { Wallet, verifyMessage } from "ethers";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
-import serverless from "serverless-http";
-
+import admin from "firebase-admin";
 
 const app = express();
-const port = Number(process.env.PORT || 8080);
 
+// --- Configuration ---
+const port = Number(process.env.PORT || 8080);
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const allowUnauthenticatedTrades = process.env.ALLOW_UNAUTHENTICATED_TRADES === "true";
@@ -25,48 +25,50 @@ const corsOptions = allowedOrigins.length
     ? { origin: allowedOrigins }
     : { origin: true };
 
-app.use(cors(corsOptions));
-app.use(express.json({ limit: "1mb" }));
-app.use(morgan("combined"));
-
+// --- State & Connections ---
+let firestore = null;
 let supabase = null;
+
+// Initialize Supabase
 if (supabaseUrl && supabaseServiceRoleKey) {
     supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 }
 
-import admin from "firebase-admin";
-
-let firestore = null;
-
+// Initialize Firebase/Firestore
 if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-    if (!admin.apps.length) {
-        try {
+    try {
+        if (!admin.apps.length) {
             const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-
-            serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
-
+            serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
             admin.initializeApp({
                 credential: admin.credential.cert(serviceAccount),
             });
             console.log("Firebase Admin Initialized");
-        } catch (error) {
-            console.error("Firebase Init Error:", error.message);
         }
+        firestore = admin.firestore();
+    } catch (error) {
+        console.error("Firebase Init Error:", error.message);
     }
-    firestore = admin.firestore();
 }
 
+// --- Middleware ---
+app.use(cors(corsOptions));
+app.use(express.json({ limit: "1mb" }));
+// app.use(morgan("combined")); // Disabled morgan to rule out stream issues in serverless
 
-
+// --- Helper Functions ---
 function generateApiKey() {
     return "ag_" + crypto.randomBytes(16).toString("hex");
 }
 
-app.get("/health", (_req, res) => {
+// --- Routes ---
+app.get(["/api/health", "/health"], (req, res) => {
     res.json({
         ok: true,
         service: "aifarmarket-backend",
-        supabaseConfigured: Boolean(supabase),
+        supabaseConnected: !!supabase,
+        firestoreConnected: !!firestore,
+        envCheck: !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON
     });
 });
 
@@ -381,13 +383,15 @@ app.post("/api/agent/register", async (req, res) => {
         // 3. Create agent wallet
         const wallet = Wallet.createRandom();
 
-        await firestore.collection("agent_wallets").doc(agent.id).set({
-            agentId: agent.id,
-            address: wallet.address,
-            privateKey: wallet.privateKey, // ⚠️ encrypt later
-            balance: 10000,
-            createdAt: new Date().toISOString(),
-        });
+        if (firestore) {
+            await firestore.collection("agent_wallets").doc(agent.id).set({
+                agentId: agent.id,
+                address: wallet.address,
+                privateKey: wallet.privateKey, // ⚠️ encrypt later
+                balance: 10000,
+                createdAt: new Date().toISOString(),
+            });
+        }
 
         return res.json({
             success: true,
@@ -406,5 +410,12 @@ app.post("/api/agent/register", async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 });
+
+// Start server if run directly
+if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    app.listen(port, () => {
+        console.log(`Server running locally on port ${port}`);
+    });
+}
 
 export default app;

@@ -2,6 +2,7 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import morgan from "morgan";
+import { Wallet } from "ethers";
 import { createClient } from "@supabase/supabase-js";
 
 const app = express();
@@ -52,7 +53,7 @@ app.get("/api/agents", async (_req, res) => {
 app.get("/api/portfolio", async (req, res) => {
   try {
     if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
-    
+
     // In a real app, you'd filter by user/owner.
     const { data: positions, error: pError } = await supabase.from("positions").select("*");
     const { data: trades, error: tError } = await supabase.from("trades").select("*").order("created_at", { ascending: false }).limit(20);
@@ -80,7 +81,7 @@ app.get("/api/markets", async (_req, res) => {
     }
 
     const data = await r.json();
-    
+
     // Sort by last_traded_at (or fallback to created_at) descending
     const markets = (Array.isArray(data) ? data : [])
       .sort((a, b) => {
@@ -200,6 +201,105 @@ app.post("/api/mcp", async (req, res) => {
   }
 
   return res.status(400).json({ error: "Unknown tool" });
+});
+
+app.post("/api/account/create", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
+
+    const { wallet_address, signature, message } = req.body || {};
+
+    if (!wallet_address || !signature || !message) {
+      return res.status(400).json({ error: "wallet_address, signature, message required" });
+    }
+
+    // 🔐 1. Verify signature
+    let recovered;
+    try {
+      recovered = verifyMessage(message, signature);
+    } catch {
+      return res.status(400).json({ error: "Invalid signature" });
+    }
+
+    if (recovered.toLowerCase() !== wallet_address.toLowerCase()) {
+      return res.status(401).json({ error: "Signature does not match wallet" });
+    }
+
+    // 2. Check if user exists
+    let { data: user } = await supabase
+      .from("users")
+      .select("*")
+      .eq("wallet_address", wallet_address)
+      .maybeSingle();
+
+    // 3. Create user if not exists
+    if (!user) {
+      const { data: newUser, error } = await supabase
+        .from("users")
+        .insert([{ wallet_address }])
+        .select("*")
+        .single();
+
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+
+      user = newUser;
+    }
+
+    // 4. Check if trading wallet exists
+    const { data: existingWallet } = await supabase
+      .from("trading_wallets")
+      .select("*")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (existingWallet) {
+      return res.json({
+        success: true,
+        user,
+        trading_wallet: {
+          address: existingWallet.address,
+          balance: existingWallet.balance,
+        },
+        message: "Account already exists",
+      });
+    }
+
+    // 5. Create custodial trading wallet
+    const wallet = Wallet.createRandom();
+
+    const { data: tradingWallet, error: walletError } = await supabase
+      .from("trading_wallets")
+      .insert([
+        {
+          user_id: user.id,
+          address: wallet.address,
+          private_key: wallet.privateKey, // ⚠️ encrypt later
+          balance: 10000,
+        },
+      ])
+      .select("*")
+      .single();
+
+    if (walletError) {
+      return res.status(500).json({ error: walletError.message });
+    }
+
+    return res.json({
+      success: true,
+      user,
+      trading_wallet: {
+        address: tradingWallet.address,
+        balance: tradingWallet.balance,
+      },
+    });
+
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 app.listen(port, () => {

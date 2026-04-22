@@ -71,9 +71,13 @@ api.get("/user-exists", async (req, res) => {
             .eq("address", String(address).toLowerCase())
             .maybeSingle();
 
-        if (error) throw error;
+        if (error) {
+            console.error("Supabase user-exists error:", error);
+            throw error;
+        }
         return res.json({ exists: !!user, user });
     } catch (err) {
+        console.error("Full error in user-exists:", err);
         return res.status(500).json({ error: err.message });
     }
 });
@@ -112,9 +116,13 @@ api.post("/create-user", async (req, res) => {
             .select("*")
             .single();
 
-        if (error) throw error;
+        if (error) {
+            console.error("Supabase create-user error:", error);
+            throw error;
+        }
         return res.json(newUser);
     } catch (err) {
+        console.error("Full error in create-user:", err);
         return res.status(500).json({ error: err.message });
     }
 });
@@ -187,11 +195,16 @@ api.get("/portfolio", async (req, res) => {
         if (!supabase) return res.status(500).json({ error: "Supabase not configured" }); 
 
         // 1. Get User and Balance
-        const { data: user } = await supabase
+        const { data: user, error } = await supabase
             .from("users")
             .select("*")
             .eq("address", address.toLowerCase())
             .single();
+
+        if (error && error.code !== "PGRST116") {
+            console.error("Supabase portfolio error:", error);
+            throw error;
+        }
 
         if (!user) {
             return res.json({
@@ -241,6 +254,7 @@ api.get("/portfolio", async (req, res) => {
             performance: performanceRes.data || []
         });
     } catch (err) {
+        console.error("Full error in portfolio:", err);
         return res.status(500).json({ error: err.message });
     }
 });

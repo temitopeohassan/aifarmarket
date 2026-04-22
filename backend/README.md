@@ -43,4 +43,8 @@ From `backend`:
 
 ## Database
 
-Schema migration lives at `migrations/001_init.sql` and should be applied to Supabase Postgres.
+The database schema is defined in:
+- `migrations/001_init.sql` (Initial structure)
+- `migrations/schema.sql` (Comprehensive schema based on current API endpoints)
+
+Apply these to your Supabase SQL Editor.

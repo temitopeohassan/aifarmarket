@@ -46,6 +46,15 @@ export async function GET() {
         'https://aifarmarket.vercel.app/og-image.png',
       castShareUrl: 'https://aifarmarket.vercel.app/',
     },
+    miniapp: {
+      version: '1',
+      name: 'AI FarMarket',
+      iconUrl: 'https://aifarmarket.vercel.app/icon.png',
+      homeUrl: 'https://aifarmarket.vercel.app',
+      imageUrl: 'https://aifarmarket.vercel.app/image.png',
+      buttonTitle: 'Launch',
+      webhookUrl: 'https://aifarmarket.vercel.app/api/webhook',
+    },
    "baseBuilder": {
     "allowedAddresses": ["0x14E85A3859B7532CB31E16EA66fB5F981B6dE1C0"]
     },

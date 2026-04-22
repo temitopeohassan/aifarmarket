@@ -8,11 +8,14 @@ import { Button } from '@/components/ui/button';
 import { Plus, Settings, PlayCircle, PauseCircle, StopCircle } from 'lucide-react';
 import AgentDetail from '@/components/agents/agent-detail';
 import RegisterAgentDialog from '@/components/agents/register-agent-dialog';
+import RegistrationInstructionsDialog from '@/components/agents/registration-instructions-dialog';
+import { HelpCircle } from 'lucide-react';
 
 export default function Agents() {
   const { agents, selectedAgent, setSelectedAgent } = useApp();
   const [showDetail, setShowDetail] = useState(false);
   const [showRegisterDialog, setShowRegisterDialog] = useState(false);
+  const [showInstructions, setShowInstructions] = useState(false);
 
   const activeAgents = agents.filter((a) => a.status === 'active').length;
   const totalProfit = agents.reduce((sum, a) => sum + a.performance.profitLoss, 0);
@@ -20,18 +23,29 @@ export default function Agents() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-foreground mb-2">Agent Management</h1>
           <p className="text-muted-foreground">Create, manage, and monitor your AI trading agents</p>
         </div>
-        <Button
-          onClick={() => setShowRegisterDialog(true)}
-          className="bg-primary hover:bg-primary/90"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Register New Agent
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setShowInstructions(true)}
+            className="rounded-full border-border hover:bg-secondary/20"
+            title="Registration Instructions"
+          >
+            <HelpCircle className="w-5 h-5 text-muted-foreground" />
+          </Button>
+          <Button
+            onClick={() => setShowRegisterDialog(true)}
+            className="bg-primary hover:bg-primary/90 font-bold"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Register New Agent
+          </Button>
+        </div>
       </div>
 
       {/* Summary Stats */}
@@ -160,6 +174,9 @@ export default function Agents() {
 
       {/* Register Dialog */}
       <RegisterAgentDialog open={showRegisterDialog} onOpenChange={setShowRegisterDialog} />
+      
+      {/* Instructions Dialog */}
+      <RegistrationInstructionsDialog open={showInstructions} onOpenChangeAction={setShowInstructions} />
     </div>
   );
 }

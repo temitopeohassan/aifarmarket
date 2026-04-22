@@ -1,11 +1,8 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
-import morgan from "morgan";
-import { Wallet, verifyMessage } from "ethers";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
-import admin from "firebase-admin";
 
 const app = express();
 
@@ -13,8 +10,6 @@ const app = express();
 const port = Number(process.env.PORT || 8080);
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const allowUnauthenticatedTrades = process.env.ALLOW_UNAUTHENTICATED_TRADES === "true";
-const defaultAgentId = process.env.DEFAULT_AGENT_ID || null;
 
 const allowedOrigins = (process.env.CORS_ORIGINS || "")
     .split(",")
@@ -26,7 +21,6 @@ const corsOptions = allowedOrigins.length
     : { origin: true };
 
 // --- State & Connections ---
-let firestore = null;
 let supabase = null;
 
 // Initialize Supabase
@@ -34,27 +28,17 @@ if (supabaseUrl && supabaseServiceRoleKey) {
     supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 }
 
-// Initialize Firebase/Firestore
-if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-    try {
-        if (!admin.apps.length) {
-            const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-            serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
-            admin.initializeApp({
-                credential: admin.credential.cert(serviceAccount),
-            });
-            console.log("Firebase Admin Initialized");
-        }
-        firestore = admin.firestore();
-    } catch (error) {
-        console.error("Firebase Init Error:", error.message);
-    }
-}
+// Initialize Telegram Bot
+import { initTelegramBot } from "./telegram.js";
+initTelegramBot(supabase);
+
+// Initialize Polymarket Client
+import { initPolymarketClient } from "./services/polymarketService.js";
+initPolymarketClient();
 
 // --- Middleware ---
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
-// app.use(morgan("combined")); // Disabled to avoid stream issues in some serverless environments
 
 // --- Helper Functions ---
 function generateApiKey() {
@@ -67,14 +51,10 @@ const api = express.Router();
 // Health check
 api.get(["/health", "/"], (req, res) => {
     const supabaseConfigured = !!supabase;
-    const firestoreConfigured = !!firestore;
-    
     res.status(supabaseConfigured ? 200 : 503).json({
         ok: supabaseConfigured,
         service: "aifarmarket-backend",
-        supabaseConnected: supabaseConfigured,
-        firestoreConnected: firestoreConfigured,
-        envCheck: !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+        supabaseConnected: supabaseConfigured
     });
 });
 
@@ -83,383 +63,352 @@ api.get("/user-exists", async (req, res) => {
     try {
         const { address } = req.query;
         if (!address) return res.status(400).json({ error: "address required" });
-        if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+        if (!supabase) return res.status(500).json({ error: "Supabase not configured" }); 
 
         const { data: user, error } = await supabase
             .from("users")
-            .select("id")
-            .eq("wallet_address", String(address).toLowerCase())
+            .select("*")
+            .eq("address", String(address).toLowerCase())
             .maybeSingle();
 
         if (error) throw error;
-        return res.json({ exists: !!user });
+        return res.json({ exists: !!user, user });
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
 });
 
-api.get("/agents", async (_req, res) => {
+// Create User
+api.post("/create-user", async (req, res) => {
     try {
         if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
-        const { data, error } = await supabase.from("agents").select("*");
+
+        const { address, fid, username, display_name, pfp_url } = req.body || {};
+
+        if (!address) return res.status(400).json({ error: "address required" });
+
+        // Check if user exists
+        const { data: existingUser } = await supabase
+            .from("users")
+            .select("*")
+            .eq("address", address.toLowerCase())
+            .maybeSingle();
+
+        if (existingUser) return res.json(existingUser);
+
+        // Create user with initial balance
+        const { data: newUser, error } = await supabase
+            .from("users")
+            .insert([{ 
+                address: address.toLowerCase(),
+                fid: fid || null,
+                username: username || null,
+                display_name: display_name || null,
+                pfp_url: pfp_url || null,
+                balance: 10000,
+                available: 10000,
+                usdc_balance: 0
+            }])
+            .select("*")
+            .single();
+
         if (error) throw error;
-        return res.json({ agents: data });
+        return res.json(newUser);
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
 });
 
+// Get Agents for user
+api.get("/agents", async (req, res) => {
+    try {
+        const { address } = req.query;
+        if (!address) return res.status(400).json({ error: "address required" });
+        if (!supabase) return res.status(500).json({ error: "Supabase not configured" }); 
+
+        // 1. Get user
+        const { data: user } = await supabase
+            .from("users")
+            .select("id")
+            .eq("address", address.toLowerCase())
+            .single();
+
+        if (!user) return res.json({ agents: [] });
+
+        // 2. Get agents
+        const { data: agents, error: agentsError } = await supabase
+            .from("agents")
+            .select("*")
+            .eq("user_id", user.id);
+
+        if (agentsError) throw agentsError;
+
+        // 3. Get performance for these agents
+        const agentIds = agents.map(a => a.id);
+        const { data: performanceData } = await supabase
+            .from("performance")
+            .select("*")
+            .in("agent_id", agentIds);
+
+        // 4. Merge
+        const mergedAgents = agents.map(agent => {
+            const perf = performanceData?.find(p => p.agent_id === agent.id) || {
+                total_pnl: 0, roi: 0, win_rate: 0, sharpe_ratio: 0, trades_count: 0
+            };
+            return {
+                ...agent,
+                status: agent.is_active ? 'active' : 'stopped',
+                performance: {
+                    totalTrades: perf.trades_count,
+                    winRate: perf.win_rate,
+                    profitLoss: perf.total_pnl,
+                    roi: perf.roi,
+                    sharpeRatio: perf.sharpe_ratio,
+                    maxDrawdown: 0 
+                },
+                configuration: { 
+                    strategyType: agent.strategy || "Trend Following",
+                    riskLevel: "medium",
+                }
+            };
+        });
+
+        return res.json({ agents: mergedAgents });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// Portfolio Endpoint
 api.get("/portfolio", async (req, res) => {
     try {
-        if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+        const { address } = req.query;
+        if (!address) return res.status(400).json({ error: "address required" });
+        if (!supabase) return res.status(500).json({ error: "Supabase not configured" }); 
 
-        // In a real app, you'd filter by user/owner.
-        const { data: positions, error: pError } = await supabase.from("positions").select("*");
-        const { data: trades, error: tError } = await supabase.from("trades").select("*").order("created_at", { ascending: false }).limit(20);
-        const { data: performance, error: perfError } = await supabase.from("performance").select("*");
+        // 1. Get User and Balance
+        const { data: user } = await supabase
+            .from("users")
+            .select("*")
+            .eq("address", address.toLowerCase())
+            .single();
 
-        if (pError || tError || perfError) throw pError || tError || perfError;
+        if (!user) {
+            return res.json({
+                wallet: { balance: 0, available: 0, usdc_balance: 0 },
+                positions: [],
+                trades: [],
+                performance: []
+            });
+        }
+
+        // 2. Get all agents for user to filter related data
+        const { data: agents } = await supabase
+            .from("agents")
+            .select("id")
+            .eq("user_id", user.id);
+        
+        const agentIds = agents?.map(a => a.id) || [];
+
+        if (agentIds.length === 0) {
+            return res.json({
+                wallet: { balance: user.balance, available: user.available, usdc_balance: user.usdc_balance || 0 },
+                positions: [],
+                trades: [],
+                performance: []
+            });
+        }
+
+        // 3. Fetch related data
+        const [positionsRes, tradesRes, performanceRes] = await Promise.all([
+            supabase.from("positions").select("*").in("agent_id", agentIds),
+            supabase.from("trades").select("*").in("agent_id", agentIds).order("created_at", { ascending: false }).limit(50),
+            supabase.from("performance").select("*").in("agent_id", agentIds)
+        ]);
 
         return res.json({
-            wallet: { balance: 10000, available: 8500 }, // Mocked wallet for now
-            positions,
-            trades,
-            performance
+            wallet: { 
+                balance: user.balance, 
+                available: user.available,
+                usdc_balance: user.usdc_balance || 0,
+                address: user.address 
+            },
+            positions: (positionsRes.data || []).map(p => ({
+                ...p,
+                unrealizedPnL: Number(p.unrealized_pnl || 0)
+            })),
+            trades: tradesRes.data || [],
+            performance: performanceRes.data || []
         });
     } catch (err) {
         return res.status(500).json({ error: err.message });
+    }
+});
+
+import { executePolymarketTrade } from "./services/polymarketService.js";
+
+// Trading Endpoint
+api.post("/trade", async (req, res) => {
+    try {
+        const { market_id, side, amount, address, agent_id, outcome, price: requestedPrice } = req.body || {};
+        
+        if (!market_id || !side || !amount || !address || !agent_id) {
+            return res.status(400).json({ error: "Missing required fields" });
+        }
+
+        if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+
+        // 1. Verify User and Balance
+        const { data: user } = await supabase
+            .from("users")
+            .select("*")
+            .eq("address", address.toLowerCase())
+            .single();
+
+        if (!user) return res.status(404).json({ error: "User not found" });
+        if (user.available < amount) return res.status(400).json({ error: "Insufficient available balance" });
+
+        // 2. Verify Agent belongs to user
+        const { data: agent } = await supabase
+            .from("agents")
+            .select("*")
+            .eq("id", agent_id)
+            .eq("user_id", user.id)
+            .single();
+
+        if (!agent) return res.status(403).json({ error: "Agent not found or unauthorized" });
+
+        // 3. Execute Real Trade if possible, else use mock price
+        let price = requestedPrice || 0.5;
+        let externalTradeId = null;
+
+        if (process.env.POLYMARKET_PRIVATE_KEY && outcome) {
+            try {
+                const polyResponse = await executePolymarketTrade({
+                    marketId: market_id,
+                    side: side,
+                    amount: amount,
+                    outcome: outcome,
+                    price: price
+                });
+                externalTradeId = polyResponse.orderID;
+                console.log(`Polymarket trade executed: ${externalTradeId}`);
+            } catch (err) {
+                console.error("Polymarket trade failed:", err.message);
+                return res.status(502).json({ error: `Polymarket trade failed: ${err.message}` });
+            }
+        }
+
+        // 4. Update balance and record trade
+        const { error: tradeError } = await supabase
+            .from("trades")
+            .insert([{
+                agent_id,
+                market_id,
+                side: side.toUpperCase(),
+                amount,
+                price,
+                status: "completed",
+                reasoning: `Outcome: ${outcome || 'N/A'}. External ID: ${externalTradeId || 'MOCKED'}`
+            }]);
+
+        if (tradeError) throw tradeError;
+
+        const { error: userError } = await supabase
+            .from("users")
+            .update({ available: user.available - amount })
+            .eq("id", user.id);
+
+        if (userError) throw userError;
+
+        // 5. Update Position
+        const { data: existingPosition } = await supabase
+            .from("positions")
+            .select("*")
+            .eq("agent_id", agent_id)
+            .eq("market_id", market_id)
+            .maybeSingle();
+
+        if (existingPosition) {
+            await supabase
+                .from("positions")
+                .update({ size: Number(existingPosition.size) + amount })
+                .eq("id", existingPosition.id);
+        } else {
+            await supabase
+                .from("positions")
+                .insert([{
+                    agent_id,
+                    market_id,
+                    size: amount,
+                    avg_price: price
+                }]);
+        }
+
+        return res.json({ success: true, message: "Trade executed", tradeId: externalTradeId });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+import { registerAgent } from "./services/agentService.js";
+
+// Register Agent
+api.post("/agent/register", async (req, res) => {
+    try {
+        const agent = await registerAgent(supabase, req.body);
+        return res.json({ success: true, agent });
+    } catch (err) {
+        const status = err.message.includes("not found") ? 404 : 500;
+        return res.status(status).json({ error: err.message });
     }
 });
 
 api.get("/markets", async (_req, res) => {
     try {
-        // Fetch all active markets with pricing data
         const r = await fetch("https://gamma-api.polymarket.com/markets?limit=100&active=true");
-        if (!r.ok) {
-            return res.status(502).json({ error: "Failed to fetch markets" });
-        }
+        if (!r.ok) return res.status(502).json({ error: "Failed to fetch markets" });
 
         const data = await r.json();
-
-        // Sort by last_traded_at (or fallback to created_at) descending
         const markets = (Array.isArray(data) ? data : [])
             .sort((a, b) => {
-                const timeA = new Date(a.last_traded_at || a.created_at || 0).getTime();
-                const timeB = new Date(b.last_traded_at || b.created_at || 0).getTime();
+                const timeA = new Date(a.created_at || 0).getTime();  
+                const timeB = new Date(b.created_at || 0).getTime();  
                 return timeB - timeA;
             })
-            .map((m) => ({
-                id: String(m.id),
-                title: m.question ?? m.title ?? "",
-                yes: Math.round(Number(m?.outcomePrices?.[0] ?? 0) * 100),
-                no: Math.round(Number(m?.outcomePrices?.[1] ?? 0) * 100),
-                lastTraded: m.last_traded_at,
-                raw: m,
-            }));
+            .map((m) => {
+                // Extract category from tags or use a fallback
+                const category = m.category || (m.tags && m.tags.length > 0 ? m.tags[0] : "General");
+                
+                return {
+                    id: String(m.id),
+                    title: m.question ?? m.title ?? "",
+                    description: m.description || "",
+                    category: category,
+                    venue: "Polymarket",
+                    liquidityPool: Number(m.liquidity || 0),
+                    volume24h: Number(m.volumeNum24h || 0),
+                    endDate: m.end_date || m.closed_time,
+                    yes: Math.round(Number(m?.outcomePrices?.[0] ?? 0) * 100),
+                    no: Math.round(Number(m?.outcomePrices?.[1] ?? 0) * 100),
+                    lastTraded: m.last_traded_at,
+                    outcomes: [
+                        { name: "Yes", probability: Number(m?.outcomePrices?.[0] ?? 0) },
+                        { name: "No", probability: Number(m?.outcomePrices?.[1] ?? 0) }
+                    ],
+                    raw: m,
+                };
+            });
 
         return res.json({ markets });
     } catch (_err) {
+        console.error("Market fetch error:", _err);
         return res.status(500).json({ error: "Unexpected market fetch error" });
     }
 });
 
-api.post("/trade", async (req, res) => {
-    try {
-        const { market_id, side, amount, reasoning } = req.body || {};
-        if (!market_id || !side || typeof amount !== "number") {
-            return res.status(400).json({ error: "market_id, side, and amount are required" });
-        }
-        if (!["YES", "NO"].includes(String(side).toUpperCase())) {
-            return res.status(400).json({ error: "side must be YES or NO" });
-        }
-        if (amount <= 0) {
-            return res.status(400).json({ error: "amount must be > 0" });
-        }
-        if (amount > 1000) {
-            return res.status(400).json({ error: "Trade too large" });
-        }
-        if (!supabase) {
-            return res.status(500).json({ error: "Supabase is not configured" });
-        }
-
-        let agentId = defaultAgentId;
-        const apiKey = req.header("x-api-key");
-        if (apiKey) {
-            const { data: agent } = await supabase
-                .from("agents")
-                .select("id")
-                .eq("api_key", apiKey)
-                .single();
-            if (!agent) return res.status(401).json({ error: "Unauthorized" });
-            agentId = agent.id;
-        } else if (!allowUnauthenticatedTrades) {
-            return res.status(401).json({ error: "Missing x-api-key" });
-        }
-
-        if (!agentId) {
-            return res.status(400).json({ error: "No agent available for trade" });
-        }
-
-        const { data: market } = await supabase
-            .from("markets")
-            .select("id, probability")
-            .eq("id", market_id)
-            .single();
-
-        const price = market?.probability ?? 0.5;
-        const { data: trade, error } = await supabase
-            .from("trades")
-            .insert([
-                {
-                    agent_id: agentId,
-                    market_id,
-                    side: String(side).toUpperCase(),
-                    amount,
-                    price,
-                    status: "filled",
-                    reasoning: reasoning ?? null,
-                },
-            ])
-            .select("*")
-            .single();
-
-        if (error) {
-            return res.status(500).json({ error: "Trade insert failed", details: error.message });
-        }
-
-        return res.json({ success: true, trade });
-    } catch (_err) {
-        return res.status(500).json({ error: "Unexpected trade execution error" });
-    }
-});
-
-api.post("/mcp", async (req, res) => {
-    const { tool, input } = req.body || {};
-    if (!tool) return res.status(400).json({ error: "tool is required" });
-
-    if (tool === "get_markets") {
-        try {
-            // Internal fetch to avoid network deadlock in serverless
-            const r = await fetch("https://gamma-api.polymarket.com/markets?limit=100&active=true");
-            const data = await r.json();
-            
-            // Format similarly to /api/markets
-            const markets = (Array.isArray(data) ? data : [])
-                .sort((a, b) => {
-                    const timeA = new Date(a.last_traded_at || a.created_at || 0).getTime();
-                    const timeB = new Date(b.last_traded_at || b.created_at || 0).getTime();
-                    return timeB - timeA;
-                })
-                .map((m) => ({
-                    id: String(m.id),
-                    title: m.question ?? m.title ?? "",
-                    yes: Math.round(Number(m?.outcomePrices?.[0] ?? 0) * 100),
-                    no: Math.round(Number(m?.outcomePrices?.[1] ?? 0) * 100),
-                    lastTraded: m.last_traded_at,
-                    raw: m,
-                }));
-
-            return res.json({ markets });
-        } catch (err) {
-            return res.status(500).json({ error: "Failed to fetch markets via MCP" });
-        }
-    }
-
-    if (tool === "execute_trade") {
-        // Forward the trade request internally
-        const response = await fetch(
-            `${req.protocol}://${req.get("host")}/api/trade`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "x-api-key": req.header("x-api-key") || "" },
-                body: JSON.stringify(input || {}),
-            },
-        );
-        const data = await response.json();
-        return res.status(response.status).json(data);
-    }
-
-    return res.status(400).json({ error: "Unknown tool" });
-});
-
-// Create/Register User (Unified)
-api.post(["/create-user", "/account/create"], async (req, res) => {
-    try {
-        if (!supabase) {
-            return res.status(500).json({ error: "Supabase not configured" });
-        }
-
-        const { wallet_address, address, username, signature, message } = req.body || {};
-        const finalAddress = wallet_address || address;
-
-        if (!finalAddress) {
-            return res.status(400).json({ error: "address required" });
-        }
-
-        // Optional signature verification
-        if (signature && message) {
-            let recovered;
-            try {
-                recovered = verifyMessage(message, signature);
-            } catch {
-                return res.status(400).json({ error: "Invalid signature" });
-            }
-
-            if (recovered.toLowerCase() !== finalAddress.toLowerCase()) {
-                return res.status(401).json({ error: "Signature does not match wallet" });
-            }
-        }
-
-        // Check if user exists
-        let { data: user } = await supabase
-            .from("users")
-            .select("*")
-            .eq("wallet_address", finalAddress.toLowerCase())
-            .maybeSingle();
-
-        // Create user if not exists
-        if (!user) {
-            const { data: newUser, error } = await supabase
-                .from("users")
-                .insert([{ wallet_address: finalAddress.toLowerCase() }]) // Removed username to prevent potential schema mismatch 500s
-                .select("*")
-                .single();
-
-            if (error) {
-                console.error("Create User Insert Error:", error);
-                return res.status(500).json({ error: "Database insert failed", details: error.message });
-            }
-
-            user = newUser;
-        }
-
-        // Check/Create trading wallet
-        const { data: existingWallet } = await supabase
-            .from("trading_wallets")
-            .select("*")
-            .eq("user_id", user.id)
-            .maybeSingle();
-
-        if (existingWallet) {
-            return res.json({
-                success: true,
-                user,
-                trading_wallet: {
-                    address: existingWallet.address,
-                    balance: existingWallet.balance,
-                },
-                message: "Account already exists",
-            });
-        }
-
-        const wallet = Wallet.createRandom();
-        const { data: tradingWallet, error: walletError } = await supabase
-            .from("trading_wallets")
-            .insert([
-                {
-                    user_id: user.id,
-                    address: wallet.address,
-                    private_key: wallet.privateKey,
-                    balance: 10000,
-                },
-            ])
-            .select("*")
-            .single();
-
-        if (walletError) {
-            return res.status(500).json({ error: walletError.message });
-        }
-
-        return res.json({
-            success: true,
-            user,
-            trading_wallet: {
-                address: tradingWallet.address,
-                balance: tradingWallet.balance,
-            },
-        });
-
-    } catch (err) {
-        return res.status(500).json({ error: err.message });
-    }
-});
-
-api.post("/agent/register", async (req, res) => {
-    try {
-        const { wallet_address, signature, message, name, description } = req.body || {};
-
-        if (!wallet_address || !signature || !message || !name) {
-            return res.status(400).json({ error: "Missing required fields" });
-        }
-
-        // Verify wallet
-        const recovered = verifyMessage(message, signature);
-        if (recovered.toLowerCase() !== wallet_address.toLowerCase()) {
-            return res.status(401).json({ error: "Invalid signature" });
-        }
-
-        // Get user
-        const { data: user } = await supabase
-            .from("users")
-            .select("*")
-            .eq("wallet_address", wallet_address.toLowerCase())
-            .single();
-
-        if (!user) {
-            return res.status(404).json({ error: "User not found" });
-        }
-
-        const apiKey = generateApiKey();
-        const { data: agent, error } = await supabase
-            .from("agents")
-            .insert([
-                {
-                    user_id: user.id,
-                    name,
-                    description: description || "",
-                    api_key: apiKey,
-                },
-            ])
-            .select("*")
-            .single();
-
-        if (error) {
-            return res.status(500).json({ error: error.message });
-        }
-
-        const wallet = Wallet.createRandom();
-        if (firestore) {
-            await firestore.collection("agent_wallets").doc(agent.id).set({
-                agentId: agent.id,
-                address: wallet.address,
-                privateKey: wallet.privateKey,
-                balance: 10000,
-                createdAt: new Date().toISOString(),
-            });
-        }
-
-        return res.json({
-            success: true,
-            agent: {
-                id: agent.id,
-                name: agent.name,
-                api_key: apiKey,
-            },
-            wallet: {
-                address: wallet.address,
-                balance: 10000,
-            },
-        });
-
-    } catch (err) {
-        return res.status(500).json({ error: err.message });
-    }
-});
-
-// Apply API router
 app.use("/api", api);
 
-// Start server if run directly
 if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     app.listen(port, () => {
         console.log(`Server running locally on port ${port}`);

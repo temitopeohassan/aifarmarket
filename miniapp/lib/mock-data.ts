@@ -14,6 +14,7 @@ export const mockWallet: Wallet = {
   balance: 125000,
   available: 85000,
   reserved: 40000,
+  usdc_balance: 542.50,
 };
 
 export const mockAgents: Agent[] = [

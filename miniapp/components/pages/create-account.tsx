@@ -44,6 +44,14 @@ export default function CreateAccount({ onAccountCreatedAction }: CreateAccountP
             if (response.ok) {
                 // 3. Native haptic success feedback
                 await sdk.haptics.notificationOccurred('success');
+                
+                // Prompt user to add the app (required for notifications)
+                try {
+                    await sdk.actions.addMiniApp();
+                } catch (e) {
+                    console.log("Add app cancelled or failed", e);
+                }
+
                 onAccountCreatedAction();
             } else {
                 throw new Error('Failed to create account');

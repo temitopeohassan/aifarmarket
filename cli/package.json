@@ -1,0 +1,15 @@
+{
+  "name": "aifarmarket-cli",
+  "version": "1.0.0",
+  "description": "CLI tool for AI FarMarket agent management",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "aifm": "./index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "commander": "^13.1.0",
+    "inquirer": "^9.2.12"
+  }
+}

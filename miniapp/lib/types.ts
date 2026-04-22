@@ -5,6 +5,7 @@ export interface Wallet {
   balance: number;
   available: number;
   reserved: number;
+  usdc_balance: number;
 }
 
 export interface Agent {

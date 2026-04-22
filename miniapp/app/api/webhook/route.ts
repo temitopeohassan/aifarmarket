@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/firebaseAdmin';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: Request) {
   try {
+    if (!db) {
+        return NextResponse.json({ success: false, error: 'Database not initialized' }, { status: 503 });
+    }
+
     const body = await req.json();
     const { event, notificationDetails, fid } = body;
 

@@ -12,6 +12,9 @@ export async function sendFarcasterNotification({
   targetUrl: string;
 }) {
   try {
+    if (!db) {
+        return { success: false, error: "Database not initialized" };
+    }
     // 1. Get the token from Firestore
     const userDoc = await db.collection('users').doc(fid.toString()).get();
     const data = userDoc.data();

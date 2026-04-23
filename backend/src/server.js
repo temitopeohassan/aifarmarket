@@ -368,44 +368,59 @@ api.post("/agent/register", async (req, res) => {
 
 api.get("/markets", async (_req, res) => {
     try {
-        const r = await fetch("https://gamma-api.polymarket.com/markets?limit=100&active=true");
-        if (!r.ok) return res.status(502).json({ error: "Failed to fetch markets" });
+        // Fetching Events instead of Markets to get latest high-profile questions
+        const response = await fetch(
+            "https://gamma-api.polymarket.com/events?active=true&closed=false&order=createdAt&ascending=false&limit=50"
+        );
 
-        const data = await r.json();
-        const markets = (Array.isArray(data) ? data : [])
-            .sort((a, b) => {
-                const timeA = new Date(a.created_at || 0).getTime();  
-                const timeB = new Date(b.created_at || 0).getTime();  
-                return timeB - timeA;
-            })
-            .map((m) => {
-                // Extract category from tags or use a fallback
-                const category = m.category || (m.tags && m.tags.length > 0 ? m.tags[0] : "General");
+        if (!response.ok) {
+            return res.status(502).json({ error: "Failed to fetch events from Polymarket" });
+        }
+
+        const events = await response.json();
+        
+        // Transform Events into a flat format compatible with your frontend
+        const formattedMarkets = (Array.isArray(events) ? events : []).map((event) => {
+            // We usually want the primary market associated with the event
+            const primaryMarket = event.markets?.[0] || {};
+            
+            return {
+                id: String(event.id),
+                title: event.title,
+                description: event.description || "",
+                slug: event.slug,
+                image: event.image,
+                category: event.category?.name || "General",
+                venue: "Polymarket",
                 
-                return {
-                    id: String(m.id),
-                    title: m.question ?? m.title ?? "",
-                    description: m.description || "",
-                    category: category,
-                    venue: "Polymarket",
-                    liquidityPool: Number(m.liquidity || 0),
-                    volume24h: Number(m.volumeNum24h || 0),
-                    endDate: m.end_date || m.closed_time,
-                    yes: Math.round(Number(m?.outcomePrices?.[0] ?? 0) * 100),
-                    no: Math.round(Number(m?.outcomePrices?.[1] ?? 0) * 100),
-                    lastTraded: m.last_traded_at,
-                    outcomes: [
-                        { name: "Yes", probability: Number(m?.outcomePrices?.[0] ?? 0) },
-                        { name: "No", probability: Number(m?.outcomePrices?.[1] ?? 0) }
-                    ],
-                    raw: m,
-                };
-            });
+                // Trading Essentials
+                clobTokenId: primaryMarket.clobTokenId, // Vital for your execute_trade tool
+                marketId: primaryMarket.id,
+                
+                // Pricing & Liquidity
+                // Most events use [Yes, No] prices
+                yes: Math.round(Number(primaryMarket.outcomePrices?.[0] ?? 0) * 100),
+                no: Math.round(Number(primaryMarket.outcomePrices?.[1] ?? 0) * 100),
+                liquidity: Number(event.liquidity || 0),
+                
+                // All associated markets for this event (for complex/multi-choice)
+                subMarkets: event.markets.map(m => ({
+                    id: m.id,
+                    question: m.question,
+                    clobTokenId: m.clobTokenId,
+                    prices: m.outcomePrices
+                })),
+                
+                endDate: event.endDate,
+                createdAt: event.createdAt
+            };
+        });
 
-        return res.json({ markets });
-    } catch (_err) {
-        console.error("Market fetch error:", _err);
-        return res.status(500).json({ error: "Unexpected market fetch error" });
+        return res.json({ markets: formattedMarkets });
+
+    } catch (err) {
+        console.error("Polymarket Event Fetch Error:", err);
+        return res.status(500).json({ error: "Unexpected error fetching prediction markets" });
     }
 });
 

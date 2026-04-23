@@ -15,7 +15,7 @@ export async function initPolymarketClient() {
 
     try {
         const wallet = new Wallet(privateKey);
-        
+
         // Host: https://clob.polymarket.com
         // Chain ID: 137 (Polygon)
         clobClient = new ClobClient(
@@ -28,7 +28,7 @@ export async function initPolymarketClient() {
         );
 
         console.log("Polymarket CLOB Client initialized.");
-        
+
         // If L2 creds are missing, we might need to derive them once
         if (!process.env.POLYMARKET_L2_API_KEY) {
             console.log("Tip: Use client.createOrDeriveApiKey() to get your L2 credentials if you don't have them.");
@@ -46,23 +46,51 @@ export async function initPolymarketClient() {
  */
 export async function getMarketTokenId(marketId, outcome) {
     try {
-        // First try to get from Gamma API (most markets have clobTokenIds there)
+        // 1. Fetch market data from Gamma API
         const response = await fetch(`https://gamma-api.polymarket.com/markets/${marketId}`);
-        if (!response.ok) throw new Error("Failed to fetch market data from Gamma");
-        
+        if (!response.ok) throw new Error(`Failed to fetch market ${marketId} from Gamma`);
+
         const market = await response.json();
-        
-        // Polymarket markets have clobTokenIds array: [YesTokenId, NoTokenId]
-        if (market.clobTokenIds && Array.isArray(market.clobTokenIds)) {
-            return outcome.toUpperCase() === 'YES' ? market.clobTokenIds[0] : market.clobTokenIds[1];
+
+        // 2. Extract clobTokenIds
+        // In 2026, Gamma sometimes returns these as a stringified array or a direct array
+        let tokenIds = market.clobTokenIds;
+
+        if (typeof tokenIds === 'string') {
+            tokenIds = JSON.parse(tokenIds);
         }
-        
-        throw new Error("CLOB Token ID not found for this market");
+
+        if (tokenIds && Array.isArray(tokenIds) && tokenIds.length >= 2) {
+            // Standard Binary Market: [0] is YES, [1] is NO
+            const index = outcome.toUpperCase() === 'YES' ? 0 : 1;
+            const selectedToken = tokenIds[index];
+
+            if (selectedToken) return selectedToken;
+        }
+
+        // 3. Fallback: If clobTokenIds is missing, check the parent event
+        // Some new markets link IDs via the event's market array
+        if (market.eventId) {
+            const eventResponse = await fetch(`https://gamma-api.polymarket.com/events/${market.eventId}`);
+            if (eventResponse.ok) {
+                const event = await eventResponse.json();
+                const nestedMarket = event.markets?.find(m => String(m.id) === String(marketId));
+
+                if (nestedMarket?.clobTokenId) {
+                    // Note: If the event lookup only provides one ID, it's usually the 'YES' side 
+                    // or a specific outcome in a multi-choice set.
+                    return nestedMarket.clobTokenId;
+                }
+            }
+        }
+
+        throw new Error(`CLOB Token ID not found for market: ${marketId} outcome: ${outcome}`);
     } catch (error) {
         console.error("Error fetching token ID:", error);
         throw error;
     }
 }
+
 
 /**
  * Execute a trade on Polymarket

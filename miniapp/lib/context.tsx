@@ -26,6 +26,7 @@ interface AppContextType {
   selectedAgent: Agent | null;
   setSelectedAgent: (agent: Agent | null) => void;
   fundWallet: (amount: number) => Promise<void>;
+  mutatePortfolio: () => Promise<any>;
   isLoading: boolean;
 }
 
@@ -101,6 +102,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         selectedAgent,
         setSelectedAgent,
         fundWallet,
+        mutatePortfolio,
         isLoading
       }}
     >

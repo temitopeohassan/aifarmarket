@@ -14,16 +14,17 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { AlertCircle, CheckCircle, TrendingUp } from 'lucide-react';
+import { AlertCircle, CheckCircle, TrendingUp, Wallet, Activity } from 'lucide-react';
 
 export default function Trading() {
-  const { markets, agents, executeSimulatedTrade, portfolio } = useApp();
+  const { markets, agents, executeSimulatedTrade, portfolio, fundWallet } = useApp();
   const [selectedMarket, setSelectedMarket] = useState<string>('');
   const [selectedAgent, setSelectedAgent] = useState<string>('');
   const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy');
   const [quantity, setQuantity] = useState<string>('');
   const [price, setPrice] = useState<string>('');
   const [tradeStatus, setTradeStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
+  const [fundingStatus, setFundingStatus] = useState<'idle' | 'processing' | 'success'>('idle');
 
   const selectedMarketData = markets.find((m) => m.id === selectedMarket);
   const selectedAgentData = agents.find((a) => a.id === selectedAgent);
@@ -34,7 +35,6 @@ export default function Trading() {
 
   const canExecute =
     selectedMarket &&
-    selectedAgent &&
     quantity &&
     price &&
     totalWithFee <= portfolio.wallet.available;
@@ -46,7 +46,7 @@ export default function Trading() {
     setTimeout(() => {
       executeSimulatedTrade({
         marketId: selectedMarket,
-        agentId: selectedAgent,
+        agentId: selectedAgent || undefined, // undefined for manual
         type: tradeType,
         price: parseFloat(price),
         quantity: parseFloat(quantity),
@@ -57,6 +57,13 @@ export default function Trading() {
       setPrice('');
       setTimeout(() => setTradeStatus('idle'), 3000);
     }, 1500);
+  };
+  
+  const handleFundWallet = async () => {
+    setFundingStatus('processing');
+    await fundWallet(100); // Simulate funding $100
+    setFundingStatus('success');
+    setTimeout(() => setFundingStatus('idle'), 3000);
   };
 
   return (
@@ -142,6 +149,9 @@ export default function Trading() {
                   <SelectValue placeholder="Choose an agent..." />
                 </SelectTrigger>
                 <SelectContent className="bg-card border-border">
+                  <SelectItem value="manual" className="text-foreground font-semibold">
+                    Personal (Manual Trading)
+                  </SelectItem>
                   {agents.map((agent) => (
                     <SelectItem key={agent.id} value={agent.id} className="text-foreground">
                       {agent.name}
@@ -235,16 +245,55 @@ export default function Trading() {
 
         {/* Market Depth & Info */}
         <div className="space-y-6">
-          {/* Available Balance */}
-          <Card className="bg-card border-border">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Account Balance</CardTitle>
+          {/* Trading Wallet Balance */}
+          <Card className="bg-card border-border relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity">
+               <Activity className="w-12 h-12 text-primary" />
+            </div>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-primary flex items-center gap-2">
+                <Wallet className="w-4 h-4" />
+                Trading Wallet
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-3xl font-bold text-foreground mb-2">
-                ${portfolio.wallet.available.toFixed(2)}
-              </p>
-              <p className="text-xs text-muted-foreground">Available balance</p>
+              <div className="text-3xl font-bold text-foreground">
+                ${(portfolio?.wallet.available || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="mt-2 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></span>
+                <p className="text-xs font-medium text-muted-foreground">
+                  Polygon Chain <span className="text-[10px] opacity-70">(Polymarket)</span>
+                </p>
+              </div>
+              <div className="mt-4 pt-4 border-t border-border">
+                <Button 
+                  onClick={handleFundWallet}
+                  disabled={fundingStatus !== 'idle'}
+                  variant="outline" 
+                  className="w-full bg-primary/5 border-primary/20 hover:bg-primary/10 text-primary font-bold transition-all hover:scale-[1.02] active:scale-95"
+                >
+                  {fundingStatus === 'processing' ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2" />
+                      Funding...
+                    </>
+                  ) : fundingStatus === 'success' ? (
+                    <>
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                      Funded!
+                    </>
+                  ) : (
+                    <>
+                      <TrendingUp className="w-4 h-4 mr-2" />
+                      Fund Trade Wallet
+                    </>
+                  )}
+                </Button>
+                <p className="text-[10px] text-center text-muted-foreground mt-2">
+                  Bridge USDC from Base to Polygon Trading Wallet
+                </p>
+              </div>
             </CardContent>
           </Card>
 

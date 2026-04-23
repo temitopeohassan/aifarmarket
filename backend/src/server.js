@@ -215,28 +215,11 @@ api.get("/portfolio", async (req, res) => {
             });
         }
 
-        // 2. Get all agents for user to filter related data
-        const { data: agents } = await supabase
-            .from("agents")
-            .select("id")
-            .eq("user_id", user.id);
-        
-        const agentIds = agents?.map(a => a.id) || [];
-
-        if (agentIds.length === 0) {
-            return res.json({
-                wallet: { balance: user.balance, available: user.available, usdc_balance: user.usdc_balance || 0 },
-                positions: [],
-                trades: [],
-                performance: []
-            });
-        }
-
-        // 3. Fetch related data
+        // 3. Fetch related data (using user_id to catch both manual and agent trades)
         const [positionsRes, tradesRes, performanceRes] = await Promise.all([
-            supabase.from("positions").select("*").in("agent_id", agentIds),
-            supabase.from("trades").select("*").in("agent_id", agentIds).order("created_at", { ascending: false }).limit(50),
-            supabase.from("performance").select("*").in("agent_id", agentIds)
+            supabase.from("positions").select("*").eq("user_id", user.id),
+            supabase.from("trades").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(50),
+            supabase.from("performance").select("*").in("agent_id", agents?.map(a => a.id) || [])
         ]);
 
         return res.json({
@@ -266,7 +249,7 @@ api.post("/trade", async (req, res) => {
     try {
         const { market_id, side, amount, address, agent_id, outcome, price: requestedPrice } = req.body || {};
         
-        if (!market_id || !side || !amount || !address || !agent_id) {
+        if (!market_id || !side || !amount || !address) {
             return res.status(400).json({ error: "Missing required fields" });
         }
 
@@ -282,15 +265,17 @@ api.post("/trade", async (req, res) => {
         if (!user) return res.status(404).json({ error: "User not found" });
         if (user.available < amount) return res.status(400).json({ error: "Insufficient available balance" });
 
-        // 2. Verify Agent belongs to user
-        const { data: agent } = await supabase
-            .from("agents")
-            .select("*")
-            .eq("id", agent_id)
-            .eq("user_id", user.id)
-            .single();
+        // 2. Verify Agent belongs to user (if agent_id provided)
+        if (agent_id) {
+            const { data: agent } = await supabase
+                .from("agents")
+                .select("*")
+                .eq("id", agent_id)
+                .eq("user_id", user.id)
+                .single();
 
-        if (!agent) return res.status(403).json({ error: "Agent not found or unauthorized" });
+            if (!agent) return res.status(403).json({ error: "Agent not found or unauthorized" });
+        }
 
         // 3. Execute Real Trade if possible, else use mock price
         let price = requestedPrice || 0.5;
@@ -317,13 +302,14 @@ api.post("/trade", async (req, res) => {
         const { error: tradeError } = await supabase
             .from("trades")
             .insert([{
-                agent_id,
+                user_id: user.id,
+                agent_id: agent_id || null,
                 market_id,
                 side: side.toUpperCase(),
                 amount,
                 price,
                 status: "completed",
-                reasoning: `Outcome: ${outcome || 'N/A'}. External ID: ${externalTradeId || 'MOCKED'}`
+                reasoning: `Outcome: ${outcome || 'N/A'}. Entity: ${agent_id ? 'Agent' : 'User'}. External ID: ${externalTradeId || 'MOCKED'}`
             }]);
 
         if (tradeError) throw tradeError;
@@ -339,7 +325,8 @@ api.post("/trade", async (req, res) => {
         const { data: existingPosition } = await supabase
             .from("positions")
             .select("*")
-            .eq("agent_id", agent_id)
+            .eq("user_id", user.id)
+            .eq("agent_id", agent_id || null) // Distinguish positions by entity if needed, or unify?
             .eq("market_id", market_id)
             .maybeSingle();
 
@@ -352,7 +339,8 @@ api.post("/trade", async (req, res) => {
             await supabase
                 .from("positions")
                 .insert([{
-                    agent_id,
+                    user_id: user.id,
+                    agent_id: agent_id || null,
                     market_id,
                     size: amount,
                     avg_price: price

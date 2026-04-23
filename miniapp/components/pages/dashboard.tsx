@@ -20,24 +20,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       {/* Portfolio Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="bg-card border-border relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity">
-             <Activity className="w-12 h-12 text-primary" />
-          </div>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-primary">Base USDC Balance</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-foreground">
-              ${(portfolio.wallet.usdc_balance || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-              Live on Base Network
-            </p>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 
         <Card className="bg-card border-border">
           <CardHeader className="pb-2">

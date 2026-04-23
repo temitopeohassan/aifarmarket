@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState } from 'react';
 import useSWR from 'swr';
+import { useFarcasterWallet } from '@/components/farcaster-sdk-provider';
 import {
   Agent,
   Market,
@@ -24,15 +25,17 @@ interface AppContextType {
   executeSimulatedTrade: (trade: Partial<Trade>) => void;
   selectedAgent: Agent | null;
   setSelectedAgent: (agent: Agent | null) => void;
+  fundWallet: (amount: number) => Promise<void>;
   isLoading: boolean;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
+  const { address } = useFarcasterWallet();
   const { data: marketsData, error: marketsError } = useSWR(`/api/markets`, fetcher);
-  const { data: agentsData, error: agentsError } = useSWR(`/api/agents`, fetcher);
-  const { data: portfolioData, error: portfolioError, mutate: mutatePortfolio } = useSWR(`/api/portfolio`, fetcher);
+  const { data: agentsData, error: agentsError } = useSWR(address ? `/api/agents?address=${address}` : null, fetcher);
+  const { data: portfolioData, error: portfolioError, mutate: mutatePortfolio } = useSWR(address ? `/api/portfolio?address=${address}` : null, fetcher);
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
@@ -61,8 +64,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           market_id: tradeData.marketId,
-          side: tradeData.type === 'buy' ? 'YES' : 'NO',
-          amount: tradeData.total || 10
+          side: tradeData.type === 'buy' ? 'BUY' : 'SELL',
+          amount: tradeData.total || 10,
+          address: address,
+          agent_id: tradeData.agentId === 'manual' ? null : tradeData.agentId,
+          price: tradeData.price,
+          outcome: tradeData.type === 'buy' ? 'YES' : 'NO'
         })
       });
       if (res.ok) {
@@ -71,6 +78,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       console.error('Trade failed', err);
     }
+  };
+  
+  const fundWallet = async (amount: number) => {
+    console.log('Funding wallet', amount);
+    // Simulate API call
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    mutatePortfolio();
   };
 
   return (
@@ -86,6 +100,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         executeSimulatedTrade,
         selectedAgent,
         setSelectedAgent,
+        fundWallet,
         isLoading
       }}
     >

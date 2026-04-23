@@ -47,7 +47,8 @@ create table if not exists performance (
 -- Positions table
 create table if not exists positions (
   id uuid primary key default gen_random_uuid(),
-  agent_id uuid references agents(id) on delete cascade,
+  user_id uuid references users(id) on delete cascade,
+  agent_id uuid references agents(id) on delete cascade, -- Optional: NULL for manual trades
   market_id text not null,
   size float default 0,
   avg_price float default 0,
@@ -58,7 +59,8 @@ create table if not exists positions (
 -- Trades table
 create table if not exists trades (
   id uuid primary key default gen_random_uuid(),
-  agent_id uuid references agents(id) on delete cascade,
+  user_id uuid references users(id) on delete cascade,
+  agent_id uuid references agents(id) on delete cascade, -- Optional: NULL for manual trades
   market_id text not null,
   side text not null, -- e.g., 'BUY', 'SELL'
   amount float not null,
@@ -83,6 +85,8 @@ create table if not exists markets (
 -- Indexes for performance
 create index if not exists idx_users_address on users(address);
 create index if not exists idx_agents_user_id on agents(user_id);
+create index if not exists idx_trades_user_id on trades(user_id);
 create index if not exists idx_trades_agent_id on trades(agent_id);
+create index if not exists idx_positions_user_id on positions(user_id);
 create index if not exists idx_positions_agent_id on positions(agent_id);
 create index if not exists idx_positions_market_id on positions(market_id);

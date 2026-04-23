@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "derive-creds": "node src/scripts/derive-credentials.js",
+    "approve-usdc": "node src/scripts/approve-usdc.js",
     "vercel-build": "echo 'No build step required'"
   },
   "engines": {

@@ -354,6 +354,46 @@ api.post("/trade", async (req, res) => {
 });
 
 import { registerAgent } from "./services/agentService.js";
+import * as bridgeService from "./services/bridgeService.js";
+
+// --- Bridge Endpoints ---
+
+// Get Quote and Check Approval
+api.get("/bridge/quote", async (req, res) => {
+    try {
+        const { address, amount, fromChainId, toChainId } = req.query;
+        if (!address || !amount) return res.status(400).json({ error: "address and amount required" });
+
+        const from = Number(fromChainId || 8453);
+        const to = Number(toChainId || 137);
+        const amountInUnits = (Number(amount) * 10 ** 6).toString();
+        const token = from === 8453 ? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" : "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359";
+        
+        const [approval, quote] = await Promise.all([
+            bridgeService.checkBridgeApproval(address, amountInUnits, from, token),
+            bridgeService.getBridgeQuote(address, amount, from, to)
+        ]);
+
+        return res.json({ approval, quote });
+    } catch (err) {
+        console.error("Bridge quote error:", err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// Prepare Bridge Transaction
+api.post("/bridge/execute", async (req, res) => {
+    try {
+        const { address, quote } = req.body;
+        if (!address || !quote) return res.status(400).json({ error: "address and quote required" });
+
+        const transaction = await bridgeService.createBridgeTransaction(quote, address);
+        return res.json({ transaction });
+    } catch (err) {
+        console.error("Bridge execute error:", err);
+        return res.status(500).json({ error: err.message });
+    }
+});
 
 // Register Agent
 api.post("/agent/register", async (req, res) => {

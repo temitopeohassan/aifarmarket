@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useApp } from '@/lib/context';
+import { useFarcasterWallet } from '@/components/farcaster-sdk-provider';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,14 +18,15 @@ import { Badge } from '@/components/ui/badge';
 import { AlertCircle, CheckCircle, TrendingUp, Wallet, Activity } from 'lucide-react';
 
 export default function Trading() {
-  const { markets, agents, executeSimulatedTrade, portfolio, fundWallet } = useApp();
+  const { markets, agents, executeSimulatedTrade, portfolio, fundWallet, mutatePortfolio } = useApp();
+  const { address, provider } = useFarcasterWallet();
   const [selectedMarket, setSelectedMarket] = useState<string>('');
   const [selectedAgent, setSelectedAgent] = useState<string>('');
   const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy');
   const [quantity, setQuantity] = useState<string>('');
   const [price, setPrice] = useState<string>('');
   const [tradeStatus, setTradeStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
-  const [fundingStatus, setFundingStatus] = useState<'idle' | 'processing' | 'success'>('idle');
+  const [fundingStatus, setFundingStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
 
   const selectedMarketData = markets.find((m) => m.id === selectedMarket);
   const selectedAgentData = agents.find((a) => a.id === selectedAgent);
@@ -60,10 +62,128 @@ export default function Trading() {
   };
   
   const handleFundWallet = async () => {
+    if (!address || !provider) {
+        console.error("Wallet not connected");
+        return;
+    }
+
     setFundingStatus('processing');
-    await fundWallet(100); // Simulate funding $100
-    setFundingStatus('success');
-    setTimeout(() => setFundingStatus('idle'), 3000);
+    
+    try {
+        // 1. Get Quote and Check Approval
+        const quoteRes = await fetch(`/api/bridge/quote?address=${address}&amount=100`);
+        if (!quoteRes.ok) throw new Error("Failed to get bridge quote");
+        const { approval, quote } = await quoteRes.json();
+
+        // 2. Handle Approval if needed
+        if (approval) {
+            console.log("Approval needed, sending transaction...");
+            await provider.request({
+                method: 'eth_sendTransaction',
+                params: [{
+                    from: address,
+                    to: approval.to,
+                    data: approval.data,
+                    value: approval.value || '0x0',
+                }]
+            });
+            console.log("Approval successful");
+        }
+
+        // 3. Prepare Bridge Transaction
+        const execRes = await fetch(`/api/bridge/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address, quote })
+        });
+        if (!execRes.ok) throw new Error("Failed to prepare bridge transaction");
+        const { transaction } = await execRes.json();
+
+        // 4. Execute Bridge Swap
+        console.log("Executing bridge swap...");
+        const txHash = await provider.request({
+            method: 'eth_sendTransaction',
+            params: [{
+                from: address,
+                to: transaction.to,
+                data: transaction.data,
+                value: transaction.value || '0x0',
+                gas: transaction.gasLimit || undefined
+            }]
+        });
+
+        console.log("Bridge transaction sent:", txHash);
+        setFundingStatus('success');
+        setTimeout(() => setFundingStatus('idle'), 5000);
+        
+    } catch (err) {
+        console.error("Bridge failed:", err);
+        setFundingStatus('error');
+        setTimeout(() => setFundingStatus('idle'), 3000);
+    }
+  };
+
+  const handleWithdrawFunds = async () => {
+    if (!address || !provider) {
+        console.error("Wallet not connected");
+        return;
+    }
+
+    setFundingStatus('processing');
+    
+    try {
+        // 1. Get Quote and Check Approval (Polygon -> Base)
+        const quoteRes = await fetch(`/api/bridge/quote?address=${address}&amount=100&fromChainId=137&toChainId=8453`);
+        if (!quoteRes.ok) throw new Error("Failed to get bridge quote");
+        const { approval, quote } = await quoteRes.json();
+
+        // 2. Handle Approval if needed (on Polygon)
+        if (approval) {
+            console.log("Approval needed on Polygon, sending transaction...");
+            await provider.request({
+                method: 'eth_sendTransaction',
+                params: [{
+                    from: address,
+                    to: approval.to,
+                    data: approval.data,
+                    value: approval.value || '0x0',
+                }]
+            });
+            console.log("Approval successful");
+        }
+
+        // 3. Prepare Bridge Transaction
+        const execRes = await fetch(`/api/bridge/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address, quote })
+        });
+        if (!execRes.ok) throw new Error("Failed to prepare bridge transaction");
+        const { transaction } = await execRes.json();
+
+        // 4. Execute Bridge Swap (Polygon -> Base)
+        console.log("Executing reverse bridge swap...");
+        const txHash = await provider.request({
+            method: 'eth_sendTransaction',
+            params: [{
+                from: address,
+                to: transaction.to,
+                data: transaction.data,
+                value: transaction.value || '0x0',
+                gas: transaction.gasLimit || undefined
+            }]
+        });
+
+        console.log("Withdrawal transaction sent:", txHash);
+        setFundingStatus('success');
+        mutatePortfolio();
+        setTimeout(() => setFundingStatus('idle'), 5000);
+        
+    } catch (err) {
+        console.error("Withdrawal failed:", err);
+        setFundingStatus('error');
+        setTimeout(() => setFundingStatus('idle'), 3000);
+    }
   };
 
   return (
@@ -276,18 +396,37 @@ export default function Trading() {
                   {fundingStatus === 'processing' ? (
                     <>
                       <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2" />
-                      Funding...
+                      Processing Bridge...
                     </>
                   ) : fundingStatus === 'success' ? (
                     <>
                       <CheckCircle className="w-4 h-4 mr-2" />
-                      Funded!
+                      Transaction Sent!
+                    </>
+                  ) : fundingStatus === 'error' ? (
+                    <>
+                      <AlertCircle className="w-4 h-4 mr-2" />
+                      Bridge Failed
                     </>
                   ) : (
-                    <>
-                      <TrendingUp className="w-4 h-4 mr-2" />
-                      Fund Trade Wallet
-                    </>
+                    <div className="flex flex-col gap-2">
+                        <Button 
+                        onClick={handleFundWallet}
+                        variant="outline" 
+                        className="w-full bg-primary/5 border-primary/20 hover:bg-primary/10 text-primary font-bold transition-all hover:scale-[1.02] active:scale-95"
+                        >
+                        <TrendingUp className="w-4 h-4 mr-2" />
+                        Fund Trade Wallet (5% Fee)
+                        </Button>
+                        <Button 
+                        onClick={handleWithdrawFunds}
+                        variant="outline" 
+                        className="w-full bg-secondary/10 border-border hover:bg-secondary/20 text-foreground font-semibold transition-all hover:scale-[1.02] active:scale-95"
+                        >
+                        <Wallet className="w-4 h-4 mr-2" />
+                        Withdraw to Base (5% Fee)
+                        </Button>
+                    </div>
                   )}
                 </Button>
                 <p className="text-[10px] text-center text-muted-foreground mt-2">

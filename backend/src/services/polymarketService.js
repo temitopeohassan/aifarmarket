@@ -1,5 +1,5 @@
 import { ClobClient } from "@polymarket/clob-client";
-import { Wallet } from "ethers";
+import { ethers, Wallet } from "ethers";
 
 let clobClient = null;
 
@@ -91,6 +91,41 @@ export async function getMarketTokenId(marketId, outcome) {
     }
 }
 
+/**
+ * Approve Polymarket to spend USDC
+ * Note: This is a one-time transaction required for new wallets
+ */
+export async function approveUSDC() {
+    const privateKey = process.env.POLYMARKET_PRIVATE_KEY;
+    if (!privateKey) throw new Error("Private key missing");
+
+    const wallet = new Wallet(privateKey).connect(new ethers.providers.StaticJsonRpcProvider("https://polygon-bor-rpc.publicnode.com", 137));
+    
+    // Addresses for Polygon (Normalized with getAddress to fix checksum issues)
+    const USDC_ADDRESS = ethers.utils.getAddress("0x2791bca1f2de4661ed88a30c99a7a9449aa84174"); // USDC.e
+    const EXCHANGE_ADDRESS = ethers.utils.getAddress("0x4bfb97299e6e9d7f3630f5d6747a9d2209d843b2"); // Polymarket CLOB
+
+    console.log(`Initiating USDC approval for Exchange: ${EXCHANGE_ADDRESS}...`);
+    
+    const erc20Abi = [
+        "function approve(address spender, uint256 amount) public returns (bool)"
+    ];
+    
+    const usdcContract = new ethers.Contract(USDC_ADDRESS, erc20Abi, wallet);
+    
+    // Approve unlimited amount with explicit gas for Polygon
+    // Polygon requires higher gas prices (min 30 Gwei) to avoid rejection
+    const tx = await usdcContract.approve(
+        EXCHANGE_ADDRESS, 
+        ethers.constants.MaxUint256,
+        {
+            maxPriorityFeePerGas: ethers.utils.parseUnits("50", "gwei"),
+            maxFeePerGas: ethers.utils.parseUnits("300", "gwei")
+        }
+    );
+    return tx;
+}
+
 
 /**
  * Execute a trade on Polymarket
@@ -102,14 +137,17 @@ export async function executePolymarketTrade({ marketId, side, amount, outcome, 
 
     const tokenId = await getMarketTokenId(marketId, outcome);
 
-    // Create the order
-    // Note: side in SDK is "BUY" or "SELL". 
-    // In Polymarket, "BUYING YES" is BUY with YesTokenId.
+    // Convert USD amount to Shares (size)
+    // Polymarket SDK expects size as number of shares
+    const shares = Number(amount) / Number(price);
+
+    console.log(`Executing trade: ${side} ${shares.toFixed(2)} shares of ${tokenId} @ $${price}`);
+
     const order = await clobClient.createOrder({
         tokenID: tokenId,
-        price: price, // e.g. 0.65
+        price: Number(price), 
         side: side.toUpperCase(), // "BUY" or "SELL"
-        size: amount, // Number of shares
+        size: Number(shares.toFixed(6)), // Polymarket usually allows up to 6 decimals
         feeRateBps: 0,
         nonce: 0
     });

@@ -9,18 +9,21 @@ interface FarcasterContextType {
   address: string | null;
   fcUsername: string | null;
   isAdded: boolean;
+  provider: any | null;
 }
 
 const WalletContext = createContext<FarcasterContextType>({
   address: null,
   fcUsername: null,
-  isAdded: true
+  isAdded: true,
+  provider: null
 });
 
 export function FarcasterSDKProvider({ children }: { children: React.ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [fcUsername, setFcUsername] = useState<string | null>(null);
   const [isAdded, setIsAdded] = useState<boolean>(true);
+  const [provider, setProvider] = useState<any | null>(null);
 
   useEffect(() => {
     const initSDK = async () => {
@@ -50,8 +53,9 @@ export function FarcasterSDKProvider({ children }: { children: React.ReactNode }
         }
 
         // 4. Initialize Wallet
-        const provider = await sdk.wallet.getEthereumProvider();
-        const accounts = (await provider.request({
+        const ethProvider = await sdk.wallet.getEthereumProvider();
+        setProvider(ethProvider);
+        const accounts = (await ethProvider.request({
           method: "eth_requestAccounts"
         })) as string[];
 
@@ -68,7 +72,7 @@ export function FarcasterSDKProvider({ children }: { children: React.ReactNode }
   }, []);
 
   return (
-    <WalletContext.Provider value={{ address, fcUsername, isAdded }}>
+    <WalletContext.Provider value={{ address, fcUsername, isAdded, provider }}>
       {children}
     </WalletContext.Provider>
   );
